@@ -1,0 +1,1022 @@
+--[[
+    TRIAL CHAMBER - FINAL
+    ---------------------
+    Complete architectural build. Only portals are refined
+    (smaller, recessed, massive stone frame).
+]]
+
+local Workspace = game:GetService("Workspace")
+
+----------------------------------------------------------------------
+-- CONFIG
+----------------------------------------------------------------------
+local CONFIG = {
+	corridor = {
+		length = 245,
+		width = 28,
+		height = 21,
+		segments = 14,
+		doorInset = 10.5,
+	},
+	roomB = {
+		radius = 56.25,
+		wallHeight = 27.5,
+		wallSegments = 80,
+		domeHeight = 15,
+		statueCount = 8,
+		daisRadius = 12.5,
+		daisHeight = 1.875,
+	},
+	roomC = {
+		radius = 56.25,
+		wallHeight = 27.5,
+		wallSegments = 80,
+		domeHeight = 25,
+		starCount = 60,
+		daisRadius = 10,
+		daisHeight = 1.25,
+		moteCount = 6,
+	},
+	connectorLength = 16,
+	connectorOverlap = 4,
+	exitDoorWidth = 28,
+	wallThickness = 5,
+
+	portal = {
+		width = 15,
+		height = 12,
+		recess = 5,
+		frameThickness = 5,
+		wallWidth = 38,
+		wallHeight = 25,
+		thresholdHeight = 2,
+	},
+
+	materials = {
+		floor = Enum.Material.Slate,
+		wall = Enum.Material.Cobblestone,
+		dome = Enum.Material.Basalt,
+		rubble = Enum.Material.Rock,
+		metal = Enum.Material.Metal,
+		neon = Enum.Material.Neon,
+	},
+	colors = {
+		floor = Color3.fromRGB(58, 58, 63),
+		wall = Color3.fromRGB(72, 70, 75),
+		wallC = Color3.fromRGB(42, 46, 60),
+		domeB = Color3.fromRGB(48, 47, 52),
+		domeC = Color3.fromRGB(9, 11, 28),
+		rubble = Color3.fromRGB(80, 76, 70),
+		portal = Color3.fromRGB(120, 190, 255),
+		crystal = Color3.fromRGB(255, 150, 45),
+		star = Color3.fromRGB(255, 255, 255),
+		statue = Color3.fromRGB(90, 90, 95),
+		torch = Color3.fromRGB(255, 140, 60),
+	},
+}
+
+----------------------------------------------------------------------
+-- HELPERS
+----------------------------------------------------------------------
+local function newPart(props)
+	local p = Instance.new("Part")
+	p.Name = props.Name or "Part"
+	p.Anchored = true
+	p.Shape = props.Shape or Enum.PartType.Block
+	p.Size = props.Size
+	p.CFrame = props.CFrame
+	p.Material = props.Material or Enum.Material.SmoothPlastic
+	p.Color = props.Color or Color3.fromRGB(150, 150, 150)
+	if props.Transparency then p.Transparency = props.Transparency end
+	if props.CanCollide == false then p.CanCollide = false end
+	p.Parent = props.Parent
+	return p
+end
+
+local function addGlow(part, color, range, brightness)
+	local light = Instance.new("PointLight")
+	light.Color = color
+	light.Range = range or 16
+	light.Brightness = brightness or 2
+	light.Parent = part
+end
+
+local function angleDist(a, b)
+	return math.abs((a - b + 180) % 360 - 180)
+end
+
+local function frameFromAxes(pos, right, up, back)
+	return CFrame.fromMatrix(pos, right, up, back)
+end
+
+----------------------------------------------------------------------
+-- ENTRANCE PORTAL (refined)
+----------------------------------------------------------------------
+local function buildEntrancePortal(root)
+	local c = CONFIG.corridor
+	local p = CONFIG.portal
+	local folder = Instance.new("Folder")
+	folder.Name = "EntrancePortal"
+	folder.Parent = root
+
+	local platformDepth = 18
+	local platformWidth = c.width + 6
+	local z = -platformDepth / 2
+
+	-- floating cliff platform
+	newPart{
+		Name = "Platform",
+		Size = Vector3.new(platformWidth, 2, platformDepth),
+		CFrame = CFrame.new(0, -1, z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.rubble,
+		Parent = folder,
+	}
+
+	-- Portal wall now flush with corridor entrance (z = 0)
+	local wallZ = 0
+	local pillarWidth = (p.wallWidth - p.width) / 2
+	local thresholdHeight = p.thresholdHeight
+	local lintelHeight = p.wallHeight - p.height - thresholdHeight
+
+	-- 1. Left pillar
+	newPart{
+		Name = "PillarLeft",
+		Size = Vector3.new(pillarWidth, p.wallHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			-(p.width/2 + pillarWidth/2),
+			p.wallHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- 2. Right pillar
+	newPart{
+		Name = "PillarRight",
+		Size = Vector3.new(pillarWidth, p.wallHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			(p.width/2 + pillarWidth/2),
+			p.wallHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- 3. Threshold
+	newPart{
+		Name = "Threshold",
+		Size = Vector3.new(p.wallWidth, thresholdHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- 4. Lintel
+	newPart{
+		Name = "Lintel",
+		Size = Vector3.new(p.wallWidth, lintelHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight + p.height + lintelHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	-- 5. Recess side walls
+	local recessZ = wallZ - p.recess
+	-- Left inner wall
+	newPart{
+		Name = "RecessLeft",
+		Size = Vector3.new(p.frameThickness, p.height, p.recess),
+		CFrame = CFrame.new(
+			-p.width/2 - p.frameThickness/2,
+			thresholdHeight + p.height/2,
+			wallZ - p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- Right inner wall
+	newPart{
+		Name = "RecessRight",
+		Size = Vector3.new(p.frameThickness, p.height, p.recess),
+		CFrame = CFrame.new(
+			p.width/2 + p.frameThickness/2,
+			thresholdHeight + p.height/2,
+			wallZ - p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- Top inner wall
+	newPart{
+		Name = "RecessTop",
+		Size = Vector3.new(p.width, p.frameThickness, p.recess),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight + p.height + p.frameThickness/2,
+			wallZ - p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- Bottom inner wall
+	newPart{
+		Name = "RecessBottom",
+		Size = Vector3.new(p.width, p.frameThickness, p.recess),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight - p.frameThickness/2,
+			wallZ - p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	-- 6. Portal surface
+	local surface = newPart{
+		Name = "PortalSurface",
+		Size = Vector3.new(p.width - 0.5, p.height - 0.5, 0.3),
+		CFrame = CFrame.new(0, thresholdHeight + p.height/2, recessZ),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.portal,
+		Transparency = 0.35,
+		CanCollide = false,
+		Parent = folder,
+	}
+	addGlow(surface, CONFIG.colors.portal, 20, 3)
+
+	-- 7. Spawn location (just inside the corridor)
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "ChamberSpawn"
+	spawn.Anchored = true
+	spawn.CanCollide = true
+	spawn.Size = Vector3.new(6, 1, 6)
+	spawn.CFrame = CFrame.new(0, 0, 3)
+	spawn.Transparency = 1
+	spawn.Parent = folder
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- EXIT PORTAL (symmetrical)
+----------------------------------------------------------------------
+local function buildExitPortal(root, z)
+	local p = CONFIG.portal
+	local folder = Instance.new("Folder")
+	folder.Name = "ExitPortal"
+	folder.Parent = root
+
+	local wallZ = z
+	local pillarWidth = (p.wallWidth - p.width) / 2
+	local thresholdHeight = p.thresholdHeight
+	local lintelHeight = p.wallHeight - p.height - thresholdHeight
+
+	-- 1. Left pillar
+	newPart{
+		Name = "PillarLeft",
+		Size = Vector3.new(pillarWidth, p.wallHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			-(p.width/2 + pillarWidth/2),
+			p.wallHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- 2. Right pillar
+	newPart{
+		Name = "PillarRight",
+		Size = Vector3.new(pillarWidth, p.wallHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			(p.width/2 + pillarWidth/2),
+			p.wallHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- 3. Threshold
+	newPart{
+		Name = "Threshold",
+		Size = Vector3.new(p.wallWidth, thresholdHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	-- 4. Lintel
+	newPart{
+		Name = "Lintel",
+		Size = Vector3.new(p.wallWidth, lintelHeight, p.frameThickness),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight + p.height + lintelHeight/2,
+			wallZ
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	-- 5. Recess side walls (recess goes positive Z)
+	local recessZ = wallZ + p.recess
+	newPart{
+		Name = "RecessLeft",
+		Size = Vector3.new(p.frameThickness, p.height, p.recess),
+		CFrame = CFrame.new(
+			-p.width/2 - p.frameThickness/2,
+			thresholdHeight + p.height/2,
+			wallZ + p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "RecessRight",
+		Size = Vector3.new(p.frameThickness, p.height, p.recess),
+		CFrame = CFrame.new(
+			p.width/2 + p.frameThickness/2,
+			thresholdHeight + p.height/2,
+			wallZ + p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "RecessTop",
+		Size = Vector3.new(p.width, p.frameThickness, p.recess),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight + p.height + p.frameThickness/2,
+			wallZ + p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "RecessBottom",
+		Size = Vector3.new(p.width, p.frameThickness, p.recess),
+		CFrame = CFrame.new(
+			0,
+			thresholdHeight - p.frameThickness/2,
+			wallZ + p.recess/2
+		),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	-- 6. Portal surface
+	local surface = newPart{
+		Name = "PortalSurface",
+		Size = Vector3.new(p.width - 0.5, p.height - 0.5, 0.3),
+		CFrame = CFrame.new(0, thresholdHeight + p.height/2, recessZ),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.portal,
+		Transparency = 0.35,
+		CanCollide = false,
+		Parent = folder,
+	}
+	addGlow(surface, CONFIG.colors.portal, 20, 3)
+
+	-- 7. Small landing beyond the portal
+	newPart{
+		Name = "Landing",
+		Size = Vector3.new(p.wallWidth + 4, 2, 10),
+		CFrame = CFrame.new(0, -1, wallZ + 5),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.rubble,
+		Parent = folder,
+	}
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- ROOM A: CORRIDOR (unchanged)
+----------------------------------------------------------------------
+local function buildRoomA(root)
+	local folder = Instance.new("Folder")
+	folder.Name = "RoomA_Shadows"
+	folder.Parent = root
+
+	local c = CONFIG.corridor
+	local segLength = c.length / c.segments
+	local halfWidth = c.width / 2
+
+	for i = 0, c.segments - 1 do
+		local z = i * segLength + segLength / 2
+		newPart{
+			Name = "FloorTile_" .. (i + 1),
+			Size = Vector3.new(c.width, 1, segLength - 0.2),
+			CFrame = CFrame.new(0, -0.5, z),
+			Material = CONFIG.materials.floor,
+			Color = CONFIG.colors.floor,
+			Parent = folder,
+		}
+		newPart{
+			Name = "CeilingTile_" .. (i + 1),
+			Size = Vector3.new(c.width, 1, segLength - 0.2),
+			CFrame = CFrame.new(0, c.height + 0.5, z),
+			Material = CONFIG.materials.wall,
+			Color = CONFIG.colors.wall,
+			Parent = folder,
+		}
+	end
+
+	newPart{
+		Name = "WallLeft",
+		Size = Vector3.new(1, c.height, c.length),
+		CFrame = CFrame.new(-halfWidth, c.height / 2, c.length / 2),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "WallRight",
+		Size = Vector3.new(1, c.height, c.length),
+		CFrame = CFrame.new(halfWidth, c.height / 2, c.length / 2),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	newPart{
+		Name = "ClosingStoneDoor",
+		Size = Vector3.new(c.width - 0.4, c.height - 1, 1.5),
+		CFrame = CFrame.new(0, c.height + (c.height - 1) / 2 - 0.5, c.length - c.doorInset),
+		Material = Enum.Material.Basalt,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- DOME (unchanged)
+----------------------------------------------------------------------
+local function buildDome(folder, cx, cz, radius, wallHeight, domeHeight, wallSegments, ringCount, material, color)
+	local N = wallSegments
+	local halfPi = math.pi / 2
+
+	for ring = 0, ringCount - 1 do
+		local t0 = (ring / ringCount) * halfPi
+		local t1 = ((ring + 1) / ringCount) * halfPi
+		local r0 = radius * math.cos(t0)
+		local r1 = radius * math.cos(t1)
+		local h0 = wallHeight - 0.5 + domeHeight * math.sin(t0)
+		local h1 = wallHeight - 0.5 + domeHeight * math.sin(t1)
+
+		for i = 0, N - 1 do
+			local angleA = (i / N) * math.pi * 2
+			local angleB = ((i + 1) / N) * math.pi * 2
+
+			local a0 = Vector3.new(cx + math.cos(angleA) * r0, h0, cz + math.sin(angleA) * r0)
+			local b0 = Vector3.new(cx + math.cos(angleB) * r0, h0, cz + math.sin(angleB) * r0)
+			local a1 = Vector3.new(cx + math.cos(angleA) * r1, h1, cz + math.sin(angleA) * r1)
+			local b1 = Vector3.new(cx + math.cos(angleB) * r1, h1, cz + math.sin(angleB) * r1)
+
+			local mid0 = (a0 + b0) / 2
+			local mid1 = (a1 + b1) / 2
+			local panelCenter = (mid0 + mid1) / 2
+
+			local tangent = (b0 - a0).Unit
+			local slope = (mid1 - mid0).Unit
+			local radial = tangent:Cross(slope)
+			if radial.Magnitude > 0.001 then
+				radial = radial.Unit
+			else
+				radial = Vector3.new(0, 1, 0)
+			end
+
+			local panelWidth = (b0 - a0).Magnitude
+			local panelHeight = (mid1 - mid0).Magnitude
+
+			newPart{
+				Name = "DomePanel_r" .. (ring + 1) .. "_" .. (i + 1),
+				Size = Vector3.new(panelWidth + 0.5, panelHeight + 0.5, 1),
+				CFrame = frameFromAxes(panelCenter, tangent, slope, radial),
+				Material = material,
+				Color = color,
+				Parent = folder,
+			}
+		end
+	end
+
+	local apexY = wallHeight + domeHeight
+	newPart{
+		Name = "DomeCap",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1.5, 5, 5),
+		CFrame = CFrame.new(cx, apexY, cz) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = material,
+		Color = color,
+		Parent = folder,
+	}
+end
+
+----------------------------------------------------------------------
+-- DOORWAY ARCH (unchanged)
+----------------------------------------------------------------------
+local function buildArch(folder, cx, cz, radius, angleDeg, doorWidth, doorHeight, material, color)
+	local rad = math.rad(angleDeg)
+	local wallRadius = radius - CONFIG.wallThickness / 2
+	local px = cx + math.cos(rad) * wallRadius
+	local pz = cz + math.sin(rad) * wallRadius
+	local facing = Vector3.new(math.cos(rad), 0, math.sin(rad))
+
+	local pillarThick = 1.5
+	local pillarWidth = doorWidth / 2 - 0.5
+	local pillarHeight = doorHeight - 1.5
+
+	local leftPos = Vector3.new(px - math.sin(rad) * pillarWidth, pillarHeight / 2, pz + math.cos(rad) * pillarWidth)
+	newPart{
+		Name = "DoorPillarL",
+		Size = Vector3.new(pillarThick, pillarHeight, pillarThick),
+		CFrame = CFrame.new(leftPos, leftPos + facing) * CFrame.Angles(0, 0, 0),
+		Material = material,
+		Color = color,
+		Parent = folder,
+	}
+	local rightPos = Vector3.new(px + math.sin(rad) * pillarWidth, pillarHeight / 2, pz - math.cos(rad) * pillarWidth)
+	newPart{
+		Name = "DoorPillarR",
+		Size = Vector3.new(pillarThick, pillarHeight, pillarThick),
+		CFrame = CFrame.new(rightPos, rightPos + facing) * CFrame.Angles(0, 0, 0),
+		Material = material,
+		Color = color,
+		Parent = folder,
+	}
+	local lintelPos = Vector3.new(px, doorHeight - 0.75, pz)
+	newPart{
+		Name = "DoorLintel",
+		Size = Vector3.new(doorWidth + 1, 1.5, pillarThick),
+		CFrame = CFrame.new(lintelPos, lintelPos + facing),
+		Material = material,
+		Color = color,
+		Parent = folder,
+	}
+end
+
+----------------------------------------------------------------------
+-- CIRCULAR ROOM (unchanged)
+----------------------------------------------------------------------
+local function buildCircularRoom(params)
+	local folder = Instance.new("Folder")
+	folder.Name = params.name
+	folder.Parent = params.parent
+
+	local cx, cz = 0, params.centerZ
+	local radius = params.radius
+	local wallThickness = CONFIG.wallThickness
+	local wallRadius = radius - wallThickness / 2
+
+	newPart{
+		Name = "Floor",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1, radius * 2, radius * 2),
+		CFrame = CFrame.new(cx, -0.5, cz) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	local N = params.wallSegments
+	for i = 0, N - 1 do
+		local angleA = math.rad((i / N) * 360)
+		local angleB = math.rad(((i + 1) / N) * 360)
+		local ax, az = math.cos(angleA) * wallRadius, math.sin(angleA) * wallRadius
+		local bx, bz = math.cos(angleB) * wallRadius, math.sin(angleB) * wallRadius
+		local midAngleDeg = ((i + 0.5) / N) * 360
+
+		local blocked = false
+		for _, door in ipairs(params.doorways or {}) do
+			local halfAngle = math.deg(math.asin(math.min(1, (door.width / 2) / wallRadius)))
+			if angleDist(midAngleDeg, door.angle) < halfAngle then
+				blocked = true
+			end
+		end
+
+		if not blocked then
+			local p1 = Vector3.new(cx + ax, 0, cz + az)
+			local p2 = Vector3.new(cx + bx, 0, cz + bz)
+			local mid = (p1 + p2) / 2
+			local segLen = (p2 - p1).Magnitude
+			local tangent = (p2 - p1).Unit
+			local radial = Vector3.new(mid.X - cx, 0, mid.Z - cz).Unit
+			local up = Vector3.new(0, 1, 0)
+
+			newPart{
+				Name = "WallSeg_" .. (i + 1),
+				Size = Vector3.new(segLen + 0.8, params.wallHeight, wallThickness),
+				CFrame = frameFromAxes(
+					Vector3.new(mid.X, params.wallHeight / 2, mid.Z),
+					tangent, up, radial
+				),
+				Material = params.wallMaterial or CONFIG.materials.wall,
+				Color = params.wallColor or CONFIG.colors.wall,
+				Parent = folder,
+			}
+		end
+	end
+
+	for _, door in ipairs(params.doorways or {}) do
+		local doorHeight = params.wallHeight - 2
+		buildArch(folder, cx, cz, radius, door.angle, door.width, doorHeight,
+			params.wallMaterial or CONFIG.materials.wall,
+			params.wallColor or CONFIG.colors.wall)
+	end
+
+	buildDome(
+		folder, cx, cz, radius, params.wallHeight, params.domeHeight,
+		params.wallSegments, params.ringCount or 6,
+		params.domeMaterial or CONFIG.materials.dome,
+		params.domeColor or CONFIG.colors.domeB
+	)
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- STATUE PLACEHOLDER (unchanged)
+----------------------------------------------------------------------
+local function buildStatue(folder, position, facingCenter)
+	local model = Instance.new("Folder")
+	model.Name = "Statue"
+	model.Parent = folder
+
+	local lookDir = (facingCenter - position)
+	lookDir = Vector3.new(lookDir.X, 0, lookDir.Z)
+	if lookDir.Magnitude < 0.01 then lookDir = Vector3.new(0, 0, 1) end
+	local cf = CFrame.new(position, position + lookDir)
+
+	newPart{
+		Name = "Base",
+		Size = Vector3.new(2.5, 1, 2.5),
+		CFrame = cf * CFrame.new(0, 0.5, 0),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.statue,
+		Parent = model,
+	}
+	newPart{
+		Name = "Body",
+		Size = Vector3.new(2, 5, 1.5),
+		CFrame = cf * CFrame.new(0, 3.5, 0),
+		Material = Enum.Material.Concrete,
+		Color = CONFIG.colors.statue,
+		Parent = model,
+	}
+	newPart{
+		Name = "Hood",
+		Size = Vector3.new(1.6, 1.6, 1.6),
+		CFrame = cf * CFrame.new(0, 6.5, 0),
+		Material = Enum.Material.Concrete,
+		Color = CONFIG.colors.statue,
+		Parent = model,
+	}
+end
+
+----------------------------------------------------------------------
+-- ROOM B (unchanged)
+----------------------------------------------------------------------
+local function buildRoomB(root, centerZ)
+	local c = CONFIG.corridor
+	local rb = CONFIG.roomB
+
+	local folder = buildCircularRoom{
+		name = "RoomB_Blades",
+		parent = root,
+		centerZ = centerZ,
+		radius = rb.radius,
+		wallHeight = rb.wallHeight,
+		wallSegments = rb.wallSegments,
+		domeHeight = rb.domeHeight,
+		domeMaterial = CONFIG.materials.dome,
+		domeColor = CONFIG.colors.domeB,
+		ringCount = 6,
+		doorways = {
+			{ angle = 270, width = c.width },
+			{ angle = 90, width = c.width },
+		},
+	}
+
+	local center = Vector3.new(0, 0, centerZ)
+
+	newPart{
+		Name = "Dais",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(rb.daisHeight, rb.daisRadius * 2, rb.daisRadius * 2),
+		CFrame = CFrame.new(center.X, rb.daisHeight / 2, center.Z) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Slate,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	local golem = Instance.new("Folder")
+	golem.Name = "GolemPlaceholder"
+	golem.Parent = folder
+	local baseY = rb.daisHeight
+
+	newPart{
+		Name = "Legs",
+		Size = Vector3.new(4, 3, 3),
+		CFrame = CFrame.new(center.X, baseY + 1.5, center.Z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.statue,
+		Parent = golem,
+	}
+	newPart{
+		Name = "Torso",
+		Size = Vector3.new(5, 4, 3.5),
+		CFrame = CFrame.new(center.X, baseY + 5, center.Z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.statue,
+		Parent = golem,
+	}
+	newPart{
+		Name = "Head",
+		Size = Vector3.new(2, 2, 2),
+		CFrame = CFrame.new(center.X, baseY + 8, center.Z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.statue,
+		Parent = golem,
+	}
+
+	local coreOffsets = {
+		Core1 = Vector3.new(0, baseY + 5, -1.9),
+		Core2 = Vector3.new(-2.7, baseY + 5, 0),
+		Core3 = Vector3.new(2.7, baseY + 5, 0),
+	}
+	for coreName, offset in pairs(coreOffsets) do
+		local corePart = newPart{
+			Name = coreName,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1, 1, 1),
+			CFrame = CFrame.new(center.X + offset.X, offset.Y, center.Z + offset.Z),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.crystal,
+			CanCollide = false,
+			Parent = golem,
+		}
+		addGlow(corePart, CONFIG.colors.crystal, 10, 2)
+	end
+
+	local doorways = { { angle = 270, width = c.width }, { angle = 90, width = c.width } }
+	for i = 0, rb.statueCount - 1 do
+		local angleDeg = (i / rb.statueCount) * 360
+		local tooClose = false
+		for _, door in ipairs(doorways) do
+			if angleDist(angleDeg, door.angle) < 20 then tooClose = true end
+		end
+		if not tooClose then
+			local rad = math.rad(angleDeg)
+			local pos = Vector3.new(
+				center.X + math.cos(rad) * (rb.radius - 4),
+				0,
+				center.Z + math.sin(rad) * (rb.radius - 4)
+			)
+			buildStatue(folder, pos, center)
+		end
+	end
+
+	local torchCount = 8
+	for i = 0, torchCount - 1 do
+		local angleDeg = ((i + 0.5) / torchCount) * 360
+		local tooClose = false
+		for _, door in ipairs(doorways) do
+			if angleDist(angleDeg, door.angle) < 20 then tooClose = true end
+		end
+		if not tooClose then
+			local rad = math.rad(angleDeg)
+			local pos = Vector3.new(
+				center.X + math.cos(rad) * (rb.radius - 1.5),
+				6,
+				center.Z + math.sin(rad) * (rb.radius - 1.5)
+			)
+			local bracket = newPart{
+				Name = "TorchBracket_" .. (i + 1),
+				Size = Vector3.new(0.8, 0.8, 0.8),
+				CFrame = CFrame.new(pos),
+				Material = CONFIG.materials.neon,
+				Color = CONFIG.colors.torch,
+				CanCollide = false,
+				Parent = folder,
+			}
+			addGlow(bracket, CONFIG.colors.torch, 18, 2)
+		end
+	end
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- ROOM C (unchanged)
+----------------------------------------------------------------------
+local function buildRoomC(root, centerZ)
+	local c = CONFIG.corridor
+	local rc = CONFIG.roomC
+
+	local folder = buildCircularRoom{
+		name = "RoomC_Orrery",
+		parent = root,
+		centerZ = centerZ,
+		radius = rc.radius,
+		wallHeight = rc.wallHeight,
+		wallSegments = rc.wallSegments,
+		domeHeight = rc.domeHeight,
+		domeMaterial = Enum.Material.Basalt,
+		domeColor = CONFIG.colors.domeC,
+		wallMaterial = Enum.Material.Basalt,
+		wallColor = CONFIG.colors.wallC,
+		ringCount = 8,
+		doorways = {
+			{ angle = 270, width = c.width },
+			{ angle = 90, width = CONFIG.exitDoorWidth },
+		},
+	}
+
+	local center = Vector3.new(0, 0, centerZ)
+
+	for i = 1, rc.starCount do
+		local t = math.rad(5 + math.random() * 80)
+		local phi = math.rad(math.random() * 360)
+		local r = math.max(0, rc.radius * math.cos(t) - 0.6)
+		local h = rc.wallHeight + rc.domeHeight * math.sin(t) - 0.3
+		local star = newPart{
+			Name = "Star_" .. i,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(0.4, 0.4, 0.4),
+			CFrame = CFrame.new(center.X + math.cos(phi) * r, h, center.Z + math.sin(phi) * r),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.star,
+			CanCollide = false,
+			Parent = folder,
+		}
+		if i % 6 == 0 then addGlow(star, CONFIG.colors.star, 8, 1) end
+	end
+
+	newPart{
+		Name = "Dais",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(rc.daisHeight, rc.daisRadius * 2, rc.daisRadius * 2),
+		CFrame = CFrame.new(center.X, rc.daisHeight / 2, center.Z) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Slate,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	local heart = newPart{
+		Name = "CrystalHeart",
+		Size = Vector3.new(3, 5, 3),
+		CFrame = CFrame.new(center.X, rc.daisHeight + 3, center.Z) * CFrame.Angles(math.rad(45), math.rad(45), 0),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.crystal,
+		CanCollide = false,
+		Parent = folder,
+	}
+	addGlow(heart, CONFIG.colors.crystal, 30, 3)
+
+	for i = 1, rc.moteCount do
+		local angleDeg = (i / rc.moteCount) * 360
+		local rad = math.rad(angleDeg)
+		local orbitRadius = 12
+		local mote = newPart{
+			Name = "MotePlaceholder_" .. i,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1.2, 1.2, 1.2),
+			CFrame = CFrame.new(
+				center.X + math.cos(rad) * orbitRadius,
+				rc.daisHeight + 4,
+				center.Z + math.sin(rad) * orbitRadius
+			),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.portal,
+			CanCollide = false,
+			Transparency = 0.15,
+			Parent = folder,
+		}
+		addGlow(mote, CONFIG.colors.portal, 8, 1.5)
+	end
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- REAL CONNECTOR (unchanged)
+----------------------------------------------------------------------
+local function buildRealConnector(root, name, startZ, endZ, width, height, overlap)
+	local overlap = overlap or CONFIG.connectorOverlap
+	local extStart = startZ - overlap
+	local extEnd = endZ + overlap
+	local length = extEnd - extStart
+	local midZ = (extStart + extEnd) / 2
+	local halfW = width / 2
+
+	local folder = Instance.new("Folder")
+	folder.Name = name
+	folder.Parent = root
+
+	newPart{
+		Name = "Floor",
+		Size = Vector3.new(width, 1, length),
+		CFrame = CFrame.new(0, -0.5, midZ),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+	newPart{
+		Name = "Ceiling",
+		Size = Vector3.new(width, 1, length),
+		CFrame = CFrame.new(0, height + 0.5, midZ),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "WallLeft",
+		Size = Vector3.new(1, height, length),
+		CFrame = CFrame.new(-halfW, height / 2, midZ),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "WallRight",
+		Size = Vector3.new(1, height, length),
+		CFrame = CFrame.new(halfW, height / 2, midZ),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- MAIN
+----------------------------------------------------------------------
+local function main()
+	local existing = Workspace:FindFirstChild("TrialChamber")
+	if existing then existing:Destroy() end
+
+	local root = Instance.new("Folder")
+	root.Name = "TrialChamber"
+	root.Parent = Workspace
+
+	local c = CONFIG.corridor
+	local connLen = CONFIG.connectorLength
+	local overlap = CONFIG.connectorOverlap
+
+	local roomBCenterZ = c.length + connLen + CONFIG.roomB.radius
+	local roomCCenterZ = roomBCenterZ + CONFIG.roomB.radius + connLen + CONFIG.roomC.radius
+	local exitZ = roomCCenterZ + CONFIG.roomC.radius
+
+	buildEntrancePortal(root)
+	buildRoomA(root)
+
+	local aEnd = c.length
+	local bStart = roomBCenterZ - CONFIG.roomB.radius
+	buildRealConnector(root, "Connector_A_to_B", aEnd, bStart, c.width, c.height, overlap)
+
+	buildRoomB(root, roomBCenterZ)
+
+	local bEnd = roomBCenterZ + CONFIG.roomB.radius
+	local cStart = roomCCenterZ - CONFIG.roomC.radius
+	buildRealConnector(root, "Connector_B_to_C", bEnd, cStart, c.width, c.height, overlap)
+
+	buildRoomC(root, roomCCenterZ)
+	buildExitPortal(root, exitZ)
+
+	print(string.format(
+		"[TrialChamberBuilder] Build complete. Total length: %.0f studs (Room B center Z=%.0f, Room C center Z=%.0f, exit Z=%.0f).",
+		exitZ, roomBCenterZ, roomCCenterZ, exitZ
+	))
+end
+
+main()
