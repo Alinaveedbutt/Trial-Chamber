@@ -1,0 +1,863 @@
+--[[
+    TRIAL CHAMBER - STRUCTURE BUILDER
+    ----------------------------------
+    Builds ONLY the physical architecture of the Trial Chamber: floors, walls,
+    domed ceilings, portals, and placeholder centerpieces (golem, crystal heart,
+    statues). It does NOT build any gameplay logic (no spike traps firing, no
+    golem AI, no spell casting, no combat). Those come later as separate
+    scripts once the room shapes are locked in.
+
+    LAYOUT (all rooms sit on a straight line along +Z, matching the map's
+    linear A -> B -> C progression):
+
+        Entrance Portal  ->  Room A: Shadows (corridor)
+                          ->  Connector rubble
+                          ->  Room B: Blades (circular arena)
+                          ->  Connector rubble
+                          ->  Room C: Orrery (domed room)
+                          ->  Exit Portal
+
+    HOW TO USE
+      1. Paste this whole script into a Script inside ServerScriptService
+         (or run it once from the Studio Command Bar).
+      2. Play/Run once. Everything appears under Workspace.TrialChamber as
+         real, editable, anchored Parts.
+      3. This is a ONE-TIME architecture pass, not something meant to
+         regenerate on every server start -- once you're happy with the
+         shapes, delete/disable this script (or keep it as a "rebuild"
+         tool you re-run from the Command Bar while you iterate).
+
+    Every dimension lives in CONFIG below so you can reshape the whole
+    building without touching the builder functions.
+]]
+
+local Workspace = game:GetService("Workspace")
+
+----------------------------------------------------------------------
+-- CONFIG
+----------------------------------------------------------------------
+local CONFIG = {
+	corridor = {
+		length = 140,
+		width = 16,
+		height = 12,
+		segments = 14, -- floor/ceiling tiles; later each tile can host one spike trap
+		doorInset = 6, -- how far before the end the "closing stone door" pocket sits
+	},
+	roomB = {
+		radius = 45,
+		wallHeight = 22,
+		wallSegments = 24,
+		domeHeight = 12,
+		statueCount = 8,
+		daisRadius = 10,
+		daisHeight = 1.5,
+	},
+	roomC = {
+		radius = 45,
+		wallHeight = 22,
+		wallSegments = 24,
+		domeHeight = 20,
+		starCount = 60,
+		daisRadius = 8,
+		daisHeight = 1,
+		moteCount = 6,
+	},
+	connectorGap = 6,      -- length of rubble/opening between rooms
+	exitDoorWidth = 12,
+
+	materials = {
+		floor = Enum.Material.Slate,
+		wall = Enum.Material.Cobblestone,
+		dome = Enum.Material.Basalt,
+		rubble = Enum.Material.Rock,
+		metal = Enum.Material.Metal,
+		neon = Enum.Material.Neon,
+	},
+	colors = {
+		floor = Color3.fromRGB(58, 58, 63),
+		wall = Color3.fromRGB(72, 70, 75),         -- Room B: warm grey stone
+		wallC = Color3.fromRGB(42, 46, 60),        -- Room C: cool dark stone, reads as more mystical
+		domeB = Color3.fromRGB(48, 47, 52),
+		domeC = Color3.fromRGB(9, 11, 28),
+		rubble = Color3.fromRGB(80, 76, 70),
+		portal = Color3.fromRGB(120, 190, 255),
+		crystal = Color3.fromRGB(255, 150, 45),
+		star = Color3.fromRGB(255, 255, 255),
+		statue = Color3.fromRGB(90, 90, 95),
+		torch = Color3.fromRGB(255, 140, 60),
+	},
+}
+
+----------------------------------------------------------------------
+-- HELPERS
+----------------------------------------------------------------------
+local function newPart(props)
+	local p = Instance.new("Part")
+	p.Name = props.Name or "Part"
+	p.Anchored = true
+	p.Shape = props.Shape or Enum.PartType.Block
+	p.Size = props.Size
+	p.CFrame = props.CFrame
+	p.Material = props.Material or Enum.Material.SmoothPlastic
+	p.Color = props.Color or Color3.fromRGB(150, 150, 150)
+	if props.Transparency then
+		p.Transparency = props.Transparency
+	end
+	if props.CanCollide == false then
+		p.CanCollide = false
+	end
+	p.Parent = props.Parent
+	return p
+end
+
+local function addGlow(part, color, range, brightness)
+	local light = Instance.new("PointLight")
+	light.Color = color
+	light.Range = range or 16
+	light.Brightness = brightness or 2
+	light.Parent = part
+end
+
+-- shortest signed angular distance between two degree angles, wraparound-safe
+local function angleDist(a, b)
+	return math.abs((a - b + 180) % 360 - 180)
+end
+
+-- orthonormal CFrame from a position plus right(X)/up(Y)/back(Z) vectors
+local function frameFromAxes(pos, right, up, back)
+	return CFrame.fromMatrix(pos, right, up, back)
+end
+
+----------------------------------------------------------------------
+-- ENTRANCE PORTAL
+----------------------------------------------------------------------
+local function buildEntrancePortal(root)
+	local folder = Instance.new("Folder")
+	folder.Name = "EntrancePortal"
+	folder.Parent = root
+
+	local platformDepth = 18
+	local platformWidth = CONFIG.corridor.width + 6
+	local z = -platformDepth / 2
+
+	-- floating cliff platform
+	newPart{
+		Name = "Platform",
+		Size = Vector3.new(platformWidth, 2, platformDepth),
+		CFrame = CFrame.new(0, -1, z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.rubble,
+		Parent = folder,
+	}
+
+	-- portal arch: two pillars + lintel, near the corridor end of the platform
+	local archZ = -3
+	local archHeight = 10
+	local archWidth = 6
+	newPart{
+		Name = "PillarLeft",
+		Size = Vector3.new(1.5, archHeight, 1.5),
+		CFrame = CFrame.new(-archWidth/2, archHeight/2, archZ),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "PillarRight",
+		Size = Vector3.new(1.5, archHeight, 1.5),
+		CFrame = CFrame.new(archWidth/2, archHeight/2, archZ),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "Lintel",
+		Size = Vector3.new(archWidth + 1.5, 1.5, 1.5),
+		CFrame = CFrame.new(0, archHeight, archZ),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	-- glowing portal surface filling the archway
+	local surface = newPart{
+		Name = "PortalSurface",
+		Size = Vector3.new(archWidth - 1, archHeight - 1.5, 0.3),
+		CFrame = CFrame.new(0, (archHeight - 1.5) / 2 + 0.75, archZ),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.portal,
+		Transparency = 0.25,
+		CanCollide = false,
+		Parent = folder,
+	}
+	addGlow(surface, CONFIG.colors.portal, 20, 2.5)
+
+	-- spawn point right in front of the portal, facing into the corridor
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "ChamberSpawn"
+	spawn.Anchored = true
+	spawn.CanCollide = true
+	spawn.Size = Vector3.new(6, 1, 6)
+	spawn.CFrame = CFrame.new(0, 0, archZ + 3)
+	spawn.Transparency = 1
+	spawn.Parent = folder
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- ROOM A: THE SHADOWS (corridor)
+----------------------------------------------------------------------
+local function buildRoomA(root)
+	local folder = Instance.new("Folder")
+	folder.Name = "RoomA_Shadows"
+	folder.Parent = root
+
+	local c = CONFIG.corridor
+	local segLength = c.length / c.segments
+	local halfWidth = c.width / 2
+
+	for i = 0, c.segments - 1 do
+		local z = i * segLength + segLength / 2
+		newPart{
+			Name = "FloorTile_" .. (i + 1),
+			Size = Vector3.new(c.width, 1, segLength - 0.2),
+			CFrame = CFrame.new(0, -0.5, z),
+			Material = CONFIG.materials.floor,
+			Color = CONFIG.colors.floor,
+			Parent = folder,
+		}
+		newPart{
+			Name = "CeilingTile_" .. (i + 1),
+			Size = Vector3.new(c.width, 1, segLength - 0.2),
+			CFrame = CFrame.new(0, c.height + 0.5, z),
+			Material = CONFIG.materials.wall,
+			Color = CONFIG.colors.wall,
+			Parent = folder,
+		}
+	end
+
+	newPart{
+		Name = "WallLeft",
+		Size = Vector3.new(1, c.height, c.length),
+		CFrame = CFrame.new(-halfWidth, c.height / 2, c.length / 2),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "WallRight",
+		Size = Vector3.new(1, c.height, c.length),
+		CFrame = CFrame.new(halfWidth, c.height / 2, c.length / 2),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	-- 1c. Closing Stone Door Trap: built in its RESTING (retracted/open) position,
+	-- tucked up against the ceiling. A future trap script animates its Y down to
+	-- slam shut. It is NOT blocking the corridor in this structural pass.
+	newPart{
+		Name = "ClosingStoneDoor",
+		Size = Vector3.new(c.width - 0.4, c.height - 1, 1.5),
+		CFrame = CFrame.new(0, c.height + (c.height - 1) / 2 - 0.5, c.length - c.doorInset),
+		Material = Enum.Material.Basalt,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- DOME (a real ceiling, not a floating Ball)
+----------------------------------------------------------------------
+-- A Roblox "Ball" part is always a SOLID sphere - both halves render. Using
+-- one as a ceiling means the bottom half hangs down into the room as a
+-- boulder, which is exactly the "giant sphere" bug. Instead we build the
+-- dome out of curved rings of flat trapezoid panels (like a real masonry
+-- dome), rising from the wall top to a peak, so the room is actually
+-- sealed on top with nothing floating in open air.
+local function buildDome(folder, cx, cz, radius, wallHeight, domeHeight, wallSegments, ringCount, material, color)
+	local N = wallSegments
+	local halfPi = math.pi / 2
+
+	for ring = 0, ringCount - 1 do
+		local t0 = (ring / ringCount) * halfPi
+		local t1 = ((ring + 1) / ringCount) * halfPi
+		local r0 = radius * math.cos(t0)
+		local r1 = radius * math.cos(t1)
+		local h0 = wallHeight + domeHeight * math.sin(t0)
+		local h1 = wallHeight + domeHeight * math.sin(t1)
+
+		for i = 0, N - 1 do
+			local angleA = (i / N) * math.pi * 2
+			local angleB = ((i + 1) / N) * math.pi * 2
+
+			local a0 = Vector3.new(cx + math.cos(angleA) * r0, h0, cz + math.sin(angleA) * r0)
+			local b0 = Vector3.new(cx + math.cos(angleB) * r0, h0, cz + math.sin(angleB) * r0)
+			local a1 = Vector3.new(cx + math.cos(angleA) * r1, h1, cz + math.sin(angleA) * r1)
+			local b1 = Vector3.new(cx + math.cos(angleB) * r1, h1, cz + math.sin(angleB) * r1)
+
+			local mid0 = (a0 + b0) / 2
+			local mid1 = (a1 + b1) / 2
+			local panelCenter = (mid0 + mid1) / 2
+
+			local tangent = (b0 - a0).Unit
+			local slope = (mid1 - mid0).Unit
+			local radial = tangent:Cross(slope)
+			if radial.Magnitude > 0.001 then
+				radial = radial.Unit
+			else
+				radial = Vector3.new(0, 1, 0)
+			end
+
+			local panelWidth = (b0 - a0).Magnitude
+			local panelHeight = (mid1 - mid0).Magnitude
+
+			newPart{
+				Name = "DomePanel_r" .. (ring + 1) .. "_" .. (i + 1),
+				Size = Vector3.new(panelWidth + 0.3, panelHeight + 0.3, 1),
+				CFrame = frameFromAxes(panelCenter, tangent, slope, radial),
+				Material = material,
+				Color = color,
+				Parent = folder,
+			}
+		end
+	end
+
+	-- capstone: small flat disc sealing the very peak (the panel rings already
+	-- overlap and close it, this is just insurance against any pinhole)
+	local apexY = wallHeight + domeHeight
+	newPart{
+		Name = "DomeCap",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1.5, 5, 5),
+		CFrame = CFrame.new(cx, apexY, cz) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = material,
+		Color = color,
+		Parent = folder,
+	}
+end
+
+----------------------------------------------------------------------
+-- GENERIC CIRCULAR ROOM (used for Room B and Room C)
+----------------------------------------------------------------------
+-- doorways: array of { angle = degrees, width = studs }
+--   angle 90  points toward +Z (deeper into the chamber, i.e. the next room)
+--   angle 270 points toward -Z (back toward the corridor / previous room)
+local function buildCircularRoom(params)
+	local folder = Instance.new("Folder")
+	folder.Name = params.name
+	folder.Parent = params.parent
+
+	local cx, cz = 0, params.centerZ
+	local radius = params.radius
+
+	-- floor: a flat cylinder disc
+	newPart{
+		Name = "Floor",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1, radius * 2, radius * 2),
+		CFrame = CFrame.new(cx, -0.5, cz) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	-- ring wall: N straight segments approximating a circle, with gaps left
+	-- open wherever a doorway is defined
+	local N = params.wallSegments
+	for i = 0, N - 1 do
+		local angleA = math.rad((i / N) * 360)
+		local angleB = math.rad(((i + 1) / N) * 360)
+		local ax, az = math.cos(angleA) * radius, math.sin(angleA) * radius
+		local bx, bz = math.cos(angleB) * radius, math.sin(angleB) * radius
+		local midAngleDeg = ((i + 0.5) / N) * 360
+
+		local blocked = false
+		for _, door in ipairs(params.doorways or {}) do
+			local halfAngle = math.deg(math.asin(math.min(1, (door.width / 2) / radius))) + 3
+			if angleDist(midAngleDeg, door.angle) < halfAngle then
+				blocked = true
+			end
+		end
+
+		if not blocked then
+			local p1 = Vector3.new(cx + ax, 0, cz + az)
+			local p2 = Vector3.new(cx + bx, 0, cz + bz)
+			local mid = (p1 + p2) / 2
+			local segLen = (p2 - p1).Magnitude
+			local tangent = (p2 - p1).Unit
+			local radial = Vector3.new(mid.X - cx, 0, mid.Z - cz).Unit
+			local up = Vector3.new(0, 1, 0)
+
+			newPart{
+				Name = "WallSeg_" .. (i + 1),
+				Size = Vector3.new(segLen + 0.3, params.wallHeight, 1.4),
+				CFrame = frameFromAxes(
+					Vector3.new(mid.X, params.wallHeight / 2, mid.Z),
+					tangent, up, radial
+				),
+				Material = params.wallMaterial or CONFIG.materials.wall,
+				Color = params.wallColor or CONFIG.colors.wall,
+				Parent = folder,
+			}
+		end
+	end
+
+	-- domed ceiling: fully seals the top, see buildDome() for why this isn't a Ball
+	buildDome(
+		folder, cx, cz, radius, params.wallHeight, params.domeHeight,
+		params.wallSegments, params.ringCount or 5,
+		params.domeMaterial or CONFIG.materials.dome,
+		params.domeColor or CONFIG.colors.domeB
+	)
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- STATUE PLACEHOLDER (Room B ring decoration)
+----------------------------------------------------------------------
+local function buildStatue(folder, position, facingCenter)
+	local model = Instance.new("Folder")
+	model.Name = "Statue"
+	model.Parent = folder
+
+	local lookDir = (facingCenter - position)
+	lookDir = Vector3.new(lookDir.X, 0, lookDir.Z)
+	if lookDir.Magnitude < 0.01 then
+		lookDir = Vector3.new(0, 0, 1)
+	end
+	local cf = CFrame.new(position, position + lookDir)
+
+	newPart{
+		Name = "Base",
+		Size = Vector3.new(2.5, 1, 2.5),
+		CFrame = cf * CFrame.new(0, 0.5, 0),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.statue,
+		Parent = model,
+	}
+	newPart{
+		Name = "Body",
+		Size = Vector3.new(2, 5, 1.5),
+		CFrame = cf * CFrame.new(0, 3.5, 0),
+		Material = Enum.Material.Concrete,
+		Color = CONFIG.colors.statue,
+		Parent = model,
+	}
+	newPart{
+		Name = "Hood",
+		Size = Vector3.new(1.6, 1.6, 1.6),
+		CFrame = cf * CFrame.new(0, 6.5, 0),
+		Material = Enum.Material.Concrete,
+		Color = CONFIG.colors.statue,
+		Parent = model,
+	}
+end
+
+----------------------------------------------------------------------
+-- ROOM B: THE BLADES (golem arena)
+----------------------------------------------------------------------
+local function buildRoomB(root, centerZ)
+	local c = CONFIG.corridor
+	local rb = CONFIG.roomB
+
+	local folder = buildCircularRoom{
+		name = "RoomB_Blades",
+		parent = root,
+		centerZ = centerZ,
+		radius = rb.radius,
+		wallHeight = rb.wallHeight,
+		wallSegments = rb.wallSegments,
+		domeHeight = rb.domeHeight,
+		domeMaterial = CONFIG.materials.dome,
+		domeColor = CONFIG.colors.domeB,
+		doorways = {
+			{ angle = 270, width = c.width },       -- back to Room A
+			{ angle = 90, width = c.width },        -- onward to Room C
+		},
+	}
+
+	local center = Vector3.new(0, 0, centerZ)
+
+	-- central dais
+	newPart{
+		Name = "Dais",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(rb.daisHeight, rb.daisRadius * 2, rb.daisRadius * 2),
+		CFrame = CFrame.new(center.X, rb.daisHeight / 2, center.Z) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Slate,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	-- golem placeholder (blocky humanoid stand-in, no rig/animation yet)
+	local golem = Instance.new("Folder")
+	golem.Name = "GolemPlaceholder"
+	golem.Parent = folder
+	local baseY = rb.daisHeight
+
+	newPart{
+		Name = "Legs",
+		Size = Vector3.new(4, 3, 3),
+		CFrame = CFrame.new(center.X, baseY + 1.5, center.Z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.statue,
+		Parent = golem,
+	}
+	newPart{
+		Name = "Torso",
+		Size = Vector3.new(5, 4, 3.5),
+		CFrame = CFrame.new(center.X, baseY + 5, center.Z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.statue,
+		Parent = golem,
+	}
+	newPart{
+		Name = "Head",
+		Size = Vector3.new(2, 2, 2),
+		CFrame = CFrame.new(center.X, baseY + 8, center.Z),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.statue,
+		Parent = golem,
+	}
+
+	-- the three glowing cores (structural placeholders; hit-detection comes later)
+	local coreOffsets = {
+		Core1 = Vector3.new(0, baseY + 5, -1.9),
+		Core2 = Vector3.new(-2.7, baseY + 5, 0),
+		Core3 = Vector3.new(2.7, baseY + 5, 0),
+	}
+	for coreName, offset in pairs(coreOffsets) do
+		local corePart = newPart{
+			Name = coreName,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1, 1, 1),
+			CFrame = CFrame.new(center.X + offset.X, offset.Y, center.Z + offset.Z),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.crystal,
+			CanCollide = false,
+			Parent = golem,
+		}
+		addGlow(corePart, CONFIG.colors.crystal, 10, 2)
+	end
+
+	-- ring of hooded statues around the arena edge
+	local doorways = { { angle = 270, width = c.width }, { angle = 90, width = c.width } }
+	for i = 0, rb.statueCount - 1 do
+		local angleDeg = (i / rb.statueCount) * 360
+		local tooCloseToDoor = false
+		for _, door in ipairs(doorways) do
+			if angleDist(angleDeg, door.angle) < 20 then
+				tooCloseToDoor = true
+			end
+		end
+		if not tooCloseToDoor then
+			local rad = math.rad(angleDeg)
+			local pos = Vector3.new(
+				center.X + math.cos(rad) * (rb.radius - 4),
+				0,
+				center.Z + math.sin(rad) * (rb.radius - 4)
+			)
+			buildStatue(folder, pos, center)
+		end
+	end
+
+	-- torches around the ring: warm firelight, makes Room B read as the
+	-- lived-in combat arena versus Room C's cool starlit dome
+	local torchCount = 8
+	for i = 0, torchCount - 1 do
+		local angleDeg = ((i + 0.5) / torchCount) * 360
+		local tooCloseToDoor = false
+		for _, door in ipairs(doorways) do
+			if angleDist(angleDeg, door.angle) < 20 then
+				tooCloseToDoor = true
+			end
+		end
+		if not tooCloseToDoor then
+			local rad = math.rad(angleDeg)
+			local pos = Vector3.new(
+				center.X + math.cos(rad) * (rb.radius - 1.5),
+				6,
+				center.Z + math.sin(rad) * (rb.radius - 1.5)
+			)
+			local bracket = newPart{
+				Name = "TorchBracket_" .. (i + 1),
+				Size = Vector3.new(0.8, 0.8, 0.8),
+				CFrame = CFrame.new(pos),
+				Material = CONFIG.materials.neon,
+				Color = CONFIG.colors.torch,
+				CanCollide = false,
+				Parent = folder,
+			}
+			addGlow(bracket, CONFIG.colors.torch, 18, 2)
+		end
+	end
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- ROOM C: THE ORRERY (crystal heart room)
+----------------------------------------------------------------------
+local function buildRoomC(root, centerZ)
+	local c = CONFIG.corridor
+	local rc = CONFIG.roomC
+
+	local folder = buildCircularRoom{
+		name = "RoomC_Orrery",
+		parent = root,
+		centerZ = centerZ,
+		radius = rc.radius,
+		wallHeight = rc.wallHeight,
+		wallSegments = rc.wallSegments,
+		domeHeight = rc.domeHeight,
+		domeMaterial = Enum.Material.Basalt,
+		domeColor = CONFIG.colors.domeC,
+		wallMaterial = Enum.Material.Basalt,
+		wallColor = CONFIG.colors.wallC,
+		ringCount = 6,
+		doorways = {
+			{ angle = 270, width = c.width },          -- back to Room B
+			{ angle = 90, width = CONFIG.exitDoorWidth }, -- onward to the exit gate
+		},
+	}
+
+	local center = Vector3.new(0, 0, centerZ)
+
+	-- scatter stars just inside the dome shell (a rough constellation field;
+	-- swap in exact angle/phi pairs later if you want a literal dragon shape).
+	-- Follows the same curve as buildDome(): t=0 is the wall top, t=90 the apex.
+	for i = 1, rc.starCount do
+		local t = math.rad(5 + math.random() * 80)
+		local phi = math.rad(math.random() * 360)
+		local r = math.max(0, rc.radius * math.cos(t) - 0.6)
+		local h = rc.wallHeight + rc.domeHeight * math.sin(t) - 0.3
+		local star = newPart{
+			Name = "Star_" .. i,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(0.4, 0.4, 0.4),
+			CFrame = CFrame.new(center.X + math.cos(phi) * r, h, center.Z + math.sin(phi) * r),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.star,
+			CanCollide = false,
+			Parent = folder,
+		}
+		if i % 6 == 0 then
+			addGlow(star, CONFIG.colors.star, 8, 1)
+		end
+	end
+
+	-- central dais
+	newPart{
+		Name = "Dais",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(rc.daisHeight, rc.daisRadius * 2, rc.daisRadius * 2),
+		CFrame = CFrame.new(center.X, rc.daisHeight / 2, center.Z) * CFrame.Angles(0, 0, math.rad(90)),
+		Material = Enum.Material.Slate,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	-- crystal heart placeholder: a rotated block "gem" with a glow
+	local heart = newPart{
+		Name = "CrystalHeart",
+		Size = Vector3.new(3, 5, 3),
+		CFrame = CFrame.new(center.X, rc.daisHeight + 3, center.Z)
+			* CFrame.Angles(math.rad(45), math.rad(45), 0),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.crystal,
+		CanCollide = false,
+		Parent = folder,
+	}
+	addGlow(heart, CONFIG.colors.crystal, 30, 3)
+
+	-- orbiting mote placeholders (structural spawn markers only, not animated)
+	for i = 1, rc.moteCount do
+		local angleDeg = (i / rc.moteCount) * 360
+		local rad = math.rad(angleDeg)
+		local orbitRadius = 12
+		local mote = newPart{
+			Name = "MotePlaceholder_" .. i,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1.2, 1.2, 1.2),
+			CFrame = CFrame.new(
+				center.X + math.cos(rad) * orbitRadius,
+				rc.daisHeight + 4,
+				center.Z + math.sin(rad) * orbitRadius
+			),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.portal,
+			CanCollide = false,
+			Transparency = 0.15,
+			Parent = folder,
+		}
+		addGlow(mote, CONFIG.colors.portal, 8, 1.5)
+	end
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- CRUMBLED WALL CONNECTOR (between rooms)
+----------------------------------------------------------------------
+local function buildConnector(root, name, startZ, endZ, width)
+	local folder = Instance.new("Folder")
+	folder.Name = name
+	folder.Parent = root
+
+	local length = endZ - startZ
+	local midZ = (startZ + endZ) / 2
+
+	-- floor patch so the gap is walkable
+	newPart{
+		Name = "FloorPatch",
+		Size = Vector3.new(width, 1, length),
+		CFrame = CFrame.new(0, -0.5, midZ),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = folder,
+	}
+
+	-- broken wall stumps on either side
+	for _, side in ipairs({-1, 1}) do
+		newPart{
+			Name = "WallStump_" .. tostring(side),
+			Size = Vector3.new(1.2, math.random(4, 7), length * 0.6),
+			CFrame = CFrame.new(side * (width / 2 + 0.6), math.random(4, 7) / 2, midZ)
+				* CFrame.Angles(0, 0, math.rad(side * math.random(2, 6))),
+			Material = CONFIG.materials.rubble,
+			Color = CONFIG.colors.rubble,
+			Parent = folder,
+		}
+	end
+
+	-- scattered rubble chunks
+	for i = 1, 10 do
+		local rx = (math.random() - 0.5) * width * 0.8
+		local rz = startZ + math.random() * length
+		local size = Vector3.new(
+			math.random(10, 25) / 10,
+			math.random(8, 18) / 10,
+			math.random(10, 25) / 10
+		)
+		newPart{
+			Name = "Rubble_" .. i,
+			Size = size,
+			CFrame = CFrame.new(rx, size.Y / 2, rz)
+				* CFrame.Angles(math.rad(math.random(0, 360)), math.rad(math.random(0, 360)), math.rad(math.random(0, 360))),
+			Material = CONFIG.materials.rubble,
+			Color = CONFIG.colors.rubble,
+			Parent = folder,
+		}
+	end
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- EXIT PORTAL
+----------------------------------------------------------------------
+local function buildExitPortal(root, z)
+	local folder = Instance.new("Folder")
+	folder.Name = "ExitPortal"
+	folder.Parent = root
+
+	local archHeight = 10
+	local archWidth = 6
+
+	newPart{
+		Name = "PillarLeft",
+		Size = Vector3.new(1.5, archHeight, 1.5),
+		CFrame = CFrame.new(-archWidth / 2, archHeight / 2, z),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "PillarRight",
+		Size = Vector3.new(1.5, archHeight, 1.5),
+		CFrame = CFrame.new(archWidth / 2, archHeight / 2, z),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+	newPart{
+		Name = "Lintel",
+		Size = Vector3.new(archWidth + 1.5, 1.5, 1.5),
+		CFrame = CFrame.new(0, archHeight, z),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = folder,
+	}
+
+	local surface = newPart{
+		Name = "PortalSurface",
+		Size = Vector3.new(archWidth - 1, archHeight - 1.5, 0.3),
+		CFrame = CFrame.new(0, (archHeight - 1.5) / 2 + 0.75, z),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.portal,
+		Transparency = 0.25,
+		CanCollide = false,
+		Parent = folder,
+	}
+	addGlow(surface, CONFIG.colors.portal, 20, 2.5)
+
+	-- small landing beyond the gate
+	newPart{
+		Name = "Landing",
+		Size = Vector3.new(archWidth + 6, 2, 10),
+		CFrame = CFrame.new(0, -1, z + 5),
+		Material = Enum.Material.Rock,
+		Color = CONFIG.colors.rubble,
+		Parent = folder,
+	}
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- MAIN
+----------------------------------------------------------------------
+local function main()
+	local existing = Workspace:FindFirstChild("TrialChamber")
+	if existing then
+		existing:Destroy()
+	end
+
+	local root = Instance.new("Folder")
+	root.Name = "TrialChamber"
+	root.Parent = Workspace
+
+	local c = CONFIG.corridor
+	local gap = CONFIG.connectorGap
+
+	local roomBCenterZ = c.length + gap + CONFIG.roomB.radius
+	local aToBGapStart = c.length
+	local aToBGapEnd = roomBCenterZ - CONFIG.roomB.radius
+
+	local roomCCenterZ = roomBCenterZ + CONFIG.roomB.radius + gap + CONFIG.roomC.radius
+	local bToCGapStart = roomBCenterZ + CONFIG.roomB.radius
+	local bToCGapEnd = roomCCenterZ - CONFIG.roomC.radius
+
+	local exitZ = roomCCenterZ + CONFIG.roomC.radius
+
+	buildEntrancePortal(root)
+	buildRoomA(root)
+	buildConnector(root, "Connector_A_to_B", aToBGapStart, aToBGapEnd, c.width)
+	buildRoomB(root, roomBCenterZ)
+	buildConnector(root, "Connector_B_to_C", bToCGapStart, bToCGapEnd, c.width)
+	buildRoomC(root, roomCCenterZ)
+	buildExitPortal(root, exitZ)
+
+	print(string.format(
+		"[TrialChamberBuilder] Build complete. Total chamber length: %.0f studs (Room B center Z=%.0f, Room C center Z=%.0f, exit Z=%.0f).",
+		exitZ, roomBCenterZ, roomCCenterZ, exitZ
+		))
+end
+
+main()
