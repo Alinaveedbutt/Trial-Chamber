@@ -1,0 +1,1072 @@
+--[[
+	TRIAL CHAMBER V2 - HUB AND SPOKE DRAFT
+	---------------------------------------
+	Safe architectural draft:
+	- Does NOT modify Workspace.TrialChamber.
+	- Rebuilds only Workspace.TrialChamberV2 on each run.
+	- Room A, B, and C attach to one main hub.
+]]
+
+local Workspace = game:GetService("Workspace")
+
+----------------------------------------------------------------------
+-- CONFIG
+----------------------------------------------------------------------
+
+local CONFIG = {
+	draftOffset = Vector3.new(0, 0, 400),
+
+	hub = {
+		radius = 25,
+		height = 18,
+		wallThickness = 3,
+		floorSize = 50,
+	},
+
+	corridor = {
+		width = 16,
+		height = 18,
+		length = 32,
+		wallThickness = 1,
+	},
+
+	roomA = {
+		width = 18,
+		height = 18,
+		length = 100,
+	},
+
+	roomB = {
+		radius = 34,
+		wallHeight = 22,
+		wallSegments = 32,
+		domeHeight = 14,
+	},
+
+	roomC = {
+		radius = 36,
+		wallHeight = 22,
+		wallSegments = 32,
+		domeHeight = 22,
+	},
+
+	materials = {
+		floor = Enum.Material.Slate,
+		wall = Enum.Material.Cobblestone,
+		dome = Enum.Material.Basalt,
+		rubble = Enum.Material.Rock,
+		metal = Enum.Material.Metal,
+		neon = Enum.Material.Neon,
+	},
+
+	colors = {
+		floor = Color3.fromRGB(58, 58, 63),
+		wall = Color3.fromRGB(72, 70, 75),
+		wallC = Color3.fromRGB(42, 46, 60),
+		domeB = Color3.fromRGB(48, 47, 52),
+		domeC = Color3.fromRGB(9, 11, 28),
+		metal = Color3.fromRGB(35, 35, 40),
+		rubble = Color3.fromRGB(80, 76, 70),
+		crystal = Color3.fromRGB(255, 150, 45),
+		portal = Color3.fromRGB(120, 190, 255),
+		star = Color3.fromRGB(255, 255, 255),
+		statue = Color3.fromRGB(90, 90, 95),
+		torch = Color3.fromRGB(255, 140, 60),
+		danger = Color3.fromRGB(92, 35, 35),
+	},
+}
+
+----------------------------------------------------------------------
+-- HELPERS
+----------------------------------------------------------------------
+
+local random = Random.new(20260802)
+
+local function unitXZ(vector)
+	local flat = Vector3.new(vector.X, 0, vector.Z)
+
+	if flat.Magnitude == 0 then
+		return Vector3.new(0, 0, -1)
+	end
+
+	return flat.Unit
+end
+
+local function getRight(forward)
+	return Vector3.new(-forward.Z, 0, forward.X)
+end
+
+local function orientedCFrame(position, forward)
+	forward = unitXZ(forward)
+
+	local right = getRight(forward)
+
+	return CFrame.fromMatrix(
+		position,
+		right,
+		Vector3.new(0, 1, 0),
+		-forward
+	)
+end
+
+local function newFolder(parent, name)
+	local folder = Instance.new("Folder")
+	folder.Name = name
+	folder.Parent = parent
+
+	return folder
+end
+
+local function newPart(properties)
+	local part = Instance.new("Part")
+
+	part.Name = properties.Name or "Part"
+	part.Anchored = true
+	part.CanCollide = properties.CanCollide ~= false
+	part.CanQuery = properties.CanQuery ~= false
+	part.CastShadow = properties.CastShadow ~= false
+
+	part.Size = properties.Size
+	part.CFrame = properties.CFrame
+
+	part.Material = properties.Material or Enum.Material.SmoothPlastic
+	part.Color = properties.Color or Color3.fromRGB(150, 150, 150)
+
+	if properties.Shape then
+		part.Shape = properties.Shape
+	end
+
+	if properties.Transparency then
+		part.Transparency = properties.Transparency
+	end
+
+	part.Parent = properties.Parent
+
+	return part
+end
+
+local function addGlow(part, color, range, brightness)
+	local light = Instance.new("PointLight")
+
+	light.Color = color
+	light.Range = range or 16
+	light.Brightness = brightness or 2
+	light.Shadows = true
+	light.Parent = part
+end
+
+local function addOrientedPart(parent, name, size, position, forward, material, color, options)
+	options = options or {}
+
+	return newPart({
+		Name = name,
+		Size = size,
+		CFrame = orientedCFrame(position, forward),
+		Material = material,
+		Color = color,
+		Transparency = options.Transparency,
+		CanCollide = options.CanCollide,
+		CanQuery = options.CanQuery,
+		CastShadow = options.CastShadow,
+		Parent = parent,
+	})
+end
+
+local function getExistingChamberFloorPosition()
+	local existing = Workspace:FindFirstChild("TrialChamber")
+
+	if not existing then
+		return Vector3.new(0, 0, 0)
+	end
+
+	local centralHub = existing:FindFirstChild("CentralHub")
+
+	if centralHub then
+		local floor = centralHub:FindFirstChild("Floor", true)
+
+		if floor and floor:IsA("BasePart") then
+			return Vector3.new(
+				floor.Position.X,
+				floor.Position.Y + floor.Size.Y / 2,
+				floor.Position.Z
+			)
+		end
+
+		local part = centralHub:FindFirstChildWhichIsA("BasePart", true)
+
+		if part then
+			return Vector3.new(
+				part.Position.X,
+				part.Position.Y + part.Size.Y / 2,
+				part.Position.Z
+			)
+		end
+	end
+
+	local part = existing:FindFirstChildWhichIsA("BasePart", true)
+
+	if part then
+		return Vector3.new(
+			part.Position.X,
+			part.Position.Y + part.Size.Y / 2,
+			part.Position.Z
+		)
+	end
+
+	return Vector3.new(0, 0, 0)
+end
+
+----------------------------------------------------------------------
+-- ARCHES AND GATES
+----------------------------------------------------------------------
+
+local function buildDoorFrame(parent, name, floorPosition, forward, width, height, material, color)
+	local folder = newFolder(parent, name)
+
+	local right = getRight(forward)
+	local postThickness = 1.5
+	local postHeight = height
+	local lintelHeight = 1.5
+
+	local leftPosition =
+		floorPosition
+		- right * (width / 2 + postThickness / 2)
+		+ Vector3.new(0, postHeight / 2, 0)
+
+	local rightPosition =
+		floorPosition
+		+ right * (width / 2 + postThickness / 2)
+		+ Vector3.new(0, postHeight / 2, 0)
+
+	addOrientedPart(
+		folder,
+		"LeftPillar",
+		Vector3.new(postThickness, postHeight, 2),
+		leftPosition,
+		forward,
+		material,
+		color
+	)
+
+	addOrientedPart(
+		folder,
+		"RightPillar",
+		Vector3.new(postThickness, postHeight, 2),
+		rightPosition,
+		forward,
+		material,
+		color
+	)
+
+	addOrientedPart(
+		folder,
+		"Lintel",
+		Vector3.new(width + postThickness * 2, lintelHeight, 2),
+		floorPosition + Vector3.new(0, height - lintelHeight / 2, 0),
+		forward,
+		material,
+		color
+	)
+
+	return folder
+end
+
+local function buildBarredGate(parent, name, floorPosition, forward, width, height)
+	local folder = newFolder(parent, name)
+
+	buildDoorFrame(
+		folder,
+		"StoneFrame",
+		floorPosition,
+		forward,
+		width,
+		height,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	local right = getRight(forward)
+	local barCount = 9
+	local usableWidth = width - 1
+	local spacing = usableWidth / (barCount - 1)
+
+	for index = 0, barCount - 1 do
+		local sideOffset = -usableWidth / 2 + spacing * index
+
+		addOrientedPart(
+			folder,
+			"Bar_" .. (index + 1),
+			Vector3.new(0.55, height - 2, 0.55),
+			floorPosition
+				+ right * sideOffset
+				+ Vector3.new(0, (height - 2) / 2 + 0.5, 0),
+			forward,
+			CONFIG.materials.metal,
+			CONFIG.colors.metal
+		)
+	end
+
+	addOrientedPart(
+		folder,
+		"Crossbar",
+		Vector3.new(width, 0.65, 0.7),
+		floorPosition + Vector3.new(0, height * 0.55, 0),
+		forward,
+		CONFIG.materials.metal,
+		CONFIG.colors.metal
+	)
+
+	return folder
+end
+
+----------------------------------------------------------------------
+-- CENTRAL HUB
+----------------------------------------------------------------------
+
+local function buildCentralHub(root, basePosition, branches)
+	local hub = newFolder(root, "CentralHub")
+
+	local radius = CONFIG.hub.radius
+	local height = CONFIG.hub.height
+	local thickness = CONFIG.hub.wallThickness
+	local sideLength = 2 * radius * math.tan(math.pi / 8)
+
+	newPart({
+		Name = "HubFloor",
+		Size = Vector3.new(
+			CONFIG.hub.floorSize,
+			1,
+			CONFIG.hub.floorSize
+		),
+		CFrame = CFrame.new(basePosition + Vector3.new(0, -0.5, 0)),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = hub,
+	})
+
+	newPart({
+		Name = "HubCeiling",
+		Size = Vector3.new(
+			CONFIG.hub.floorSize,
+			1,
+			CONFIG.hub.floorSize
+		),
+		CFrame = CFrame.new(basePosition + Vector3.new(0, height + 0.5, 0)),
+		Material = CONFIG.materials.wall,
+		Color = CONFIG.colors.wall,
+		Parent = hub,
+	})
+
+	for index = 0, 7 do
+		local angle = math.rad(index * 45)
+		local normal = Vector3.new(math.cos(angle), 0, math.sin(angle))
+		local isOpening = false
+
+		for _, branch in ipairs(branches) do
+			if normal:Dot(branch.forward) > 0.97 then
+				isOpening = true
+				break
+			end
+		end
+
+		if not isOpening then
+			addOrientedPart(
+				hub,
+				"HubWall_" .. (index + 1),
+				Vector3.new(sideLength + 1, height, thickness),
+				basePosition
+					+ normal * radius
+					+ Vector3.new(0, height / 2, 0),
+				normal,
+				CONFIG.materials.wall,
+				CONFIG.colors.wall
+			)
+		end
+	end
+
+	local startMarker = newPart({
+		Name = "DraftStartPoint",
+		Size = Vector3.new(5, 0.25, 5),
+		CFrame = CFrame.new(basePosition + Vector3.new(0, 0.15, 0)),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.portal,
+		Transparency = 0.45,
+		CanCollide = false,
+		CanQuery = false,
+		Parent = hub,
+	})
+
+	addGlow(startMarker, CONFIG.colors.portal, 10, 1)
+
+	return hub
+end
+
+----------------------------------------------------------------------
+-- CORRIDORS
+----------------------------------------------------------------------
+
+local function buildCorridor(root, name, startPosition, forward, length)
+	local corridor = newFolder(root, name)
+
+	local width = CONFIG.corridor.width
+	local height = CONFIG.corridor.height
+	local wallThickness = CONFIG.corridor.wallThickness
+	local right = getRight(forward)
+	local center = startPosition + forward * (length / 2)
+
+	addOrientedPart(
+		corridor,
+		"Floor",
+		Vector3.new(width, 1, length),
+		center + Vector3.new(0, -0.5, 0),
+		forward,
+		CONFIG.materials.floor,
+		CONFIG.colors.floor
+	)
+
+	addOrientedPart(
+		corridor,
+		"Ceiling",
+		Vector3.new(width, 1, length),
+		center + Vector3.new(0, height + 0.5, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	addOrientedPart(
+		corridor,
+		"WallLeft",
+		Vector3.new(wallThickness, height, length),
+		center
+			- right * (width / 2)
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	addOrientedPart(
+		corridor,
+		"WallRight",
+		Vector3.new(wallThickness, height, length),
+		center
+			+ right * (width / 2)
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	return corridor
+end
+
+----------------------------------------------------------------------
+-- ROOM A: SHADOWS
+----------------------------------------------------------------------
+
+local function buildRoomA(root, entrancePosition, forward)
+	local room = newFolder(root, "RoomA_Shadows")
+
+	local width = CONFIG.roomA.width
+	local height = CONFIG.roomA.height
+	local length = CONFIG.roomA.length
+	local right = getRight(forward)
+
+	addOrientedPart(
+		room,
+		"Floor",
+		Vector3.new(width, 1, length),
+		entrancePosition
+			+ forward * (length / 2)
+			+ Vector3.new(0, -0.5, 0),
+		forward,
+		CONFIG.materials.floor,
+		CONFIG.colors.floor
+	)
+
+	addOrientedPart(
+		room,
+		"Ceiling",
+		Vector3.new(width, 1, length),
+		entrancePosition
+			+ forward * (length / 2)
+			+ Vector3.new(0, height + 0.5, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	addOrientedPart(
+		room,
+		"WallLeft",
+		Vector3.new(1, height, length),
+		entrancePosition
+			+ forward * (length / 2)
+			- right * (width / 2)
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	addOrientedPart(
+		room,
+		"WallRight",
+		Vector3.new(1, height, length),
+		entrancePosition
+			+ forward * (length / 2)
+			+ right * (width / 2)
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	addOrientedPart(
+		room,
+		"RoomA_ExitWall",
+		Vector3.new(width, height, 1),
+		entrancePosition
+			+ forward * length
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	-- Future spike lesson floor markers.
+	for index, distance in ipairs({ 18, 45, 77 }) do
+		addOrientedPart(
+			room,
+			"SpikeZone_" .. index,
+			Vector3.new(width - 2, 0.15, 14),
+			entrancePosition
+				+ forward * distance
+				+ Vector3.new(0, 0.08, 0),
+			forward,
+			CONFIG.materials.metal,
+			CONFIG.colors.danger,
+			{
+				CanCollide = false,
+				CanQuery = false,
+			}
+		)
+	end
+
+	-- Zigzag walls: enough room for a dash around each side.
+	local dividerWidth = width * 0.62
+
+	addOrientedPart(
+		room,
+		"ZigzagDividerLeft",
+		Vector3.new(dividerWidth, height, 1.5),
+		entrancePosition
+			+ forward * 40
+			- right * (width / 2 - dividerWidth / 2)
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	addOrientedPart(
+		room,
+		"ZigzagDividerRight",
+		Vector3.new(dividerWidth, height, 1.5),
+		entrancePosition
+			+ forward * 61
+			+ right * (width / 2 - dividerWidth / 2)
+			+ Vector3.new(0, height / 2, 0),
+		forward,
+		CONFIG.materials.wall,
+		CONFIG.colors.wall
+	)
+
+	-- Visual placeholder for the future closing stone door.
+	addOrientedPart(
+		room,
+		"ClosingStoneDoorPlaceholder",
+		Vector3.new(width - 1, height * 0.3, 1.5),
+		entrancePosition
+			+ forward * 88
+			+ Vector3.new(0, height - height * 0.15, 0),
+		forward,
+		Enum.Material.Basalt,
+		CONFIG.colors.wall
+	)
+
+	return room
+end
+
+----------------------------------------------------------------------
+-- ARENA AND DOME HELPERS
+----------------------------------------------------------------------
+
+local function buildDome(parent, centerPosition, radius, wallHeight, domeHeight, segments, rings, material, color)
+	local dome = newFolder(parent, "Dome")
+
+	for ring = 0, rings - 1 do
+		local t0 = (ring / rings) * math.pi / 2
+		local t1 = ((ring + 1) / rings) * math.pi / 2
+
+		local radius0 = radius * math.cos(t0)
+		local radius1 = radius * math.cos(t1)
+
+		local height0 = wallHeight + domeHeight * math.sin(t0)
+		local height1 = wallHeight + domeHeight * math.sin(t1)
+
+		for segment = 0, segments - 1 do
+			local angle0 = (segment / segments) * math.pi * 2
+			local angle1 = ((segment + 1) / segments) * math.pi * 2
+
+			local pointA0 = centerPosition + Vector3.new(
+				math.cos(angle0) * radius0,
+				height0,
+				math.sin(angle0) * radius0
+			)
+
+			local pointB0 = centerPosition + Vector3.new(
+				math.cos(angle1) * radius0,
+				height0,
+				math.sin(angle1) * radius0
+			)
+
+			local pointA1 = centerPosition + Vector3.new(
+				math.cos(angle0) * radius1,
+				height1,
+				math.sin(angle0) * radius1
+			)
+
+			local pointB1 = centerPosition + Vector3.new(
+				math.cos(angle1) * radius1,
+				height1,
+				math.sin(angle1) * radius1
+			)
+
+			local mid0 = (pointA0 + pointB0) / 2
+			local mid1 = (pointA1 + pointB1) / 2
+			local panelCenter = (mid0 + mid1) / 2
+
+			local tangent = (pointB0 - pointA0).Unit
+			local slope = (mid1 - mid0).Unit
+			local normal = tangent:Cross(slope)
+
+			if normal.Magnitude < 0.001 then
+				normal = Vector3.new(0, 1, 0)
+			else
+				normal = normal.Unit
+			end
+
+			local panelWidth = (pointB0 - pointA0).Magnitude
+			local panelHeight = (mid1 - mid0).Magnitude
+
+			newPart({
+				Name = "DomePanel_" .. ring .. "_" .. segment,
+				Size = Vector3.new(panelWidth + 0.35, panelHeight + 0.35, 0.8),
+				CFrame = CFrame.fromMatrix(panelCenter, tangent, slope, normal),
+				Material = material,
+				Color = color,
+				Parent = dome,
+			})
+		end
+	end
+
+	return dome
+end
+
+local function buildArena(root, name, entrancePosition, forward, settings)
+	local arena = newFolder(root, name)
+
+	local radius = settings.radius
+	local wallHeight = settings.wallHeight
+	local segments = settings.wallSegments
+	local centerPosition = entrancePosition + forward * radius
+	local entryNormal = -forward
+
+	newPart({
+		Name = "Floor",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1, radius * 2, radius * 2),
+		CFrame = CFrame.new(centerPosition + Vector3.new(0, -0.5, 0))
+			* CFrame.Angles(0, 0, math.rad(90)),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = arena,
+	})
+
+	for segment = 0, segments - 1 do
+		local angle0 = (segment / segments) * math.pi * 2
+		local angle1 = ((segment + 1) / segments) * math.pi * 2
+		local midAngle = (angle0 + angle1) / 2
+
+		local normal = Vector3.new(
+			math.cos(midAngle),
+			0,
+			math.sin(midAngle)
+		)
+
+		-- Leave a doorway facing the hub.
+		if normal:Dot(entryNormal) < 0.86 then
+			local pointA = centerPosition + Vector3.new(
+				math.cos(angle0) * (radius - 1.5),
+				0,
+				math.sin(angle0) * (radius - 1.5)
+			)
+
+			local pointB = centerPosition + Vector3.new(
+				math.cos(angle1) * (radius - 1.5),
+				0,
+				math.sin(angle1) * (radius - 1.5)
+			)
+
+			local segmentLength = (pointB - pointA).Magnitude
+
+			addOrientedPart(
+				arena,
+				"WallSegment_" .. (segment + 1),
+				Vector3.new(segmentLength + 0.45, wallHeight, 3),
+				(pointA + pointB) / 2 + Vector3.new(0, wallHeight / 2, 0),
+				normal,
+				settings.wallMaterial,
+				settings.wallColor
+			)
+		end
+	end
+
+	buildDoorFrame(
+		arena,
+		"EntranceFrame",
+		entrancePosition,
+		forward,
+		CONFIG.corridor.width,
+		wallHeight - 2,
+		settings.wallMaterial,
+		settings.wallColor
+	)
+
+	buildDome(
+		arena,
+		centerPosition,
+		radius - 1.5,
+		wallHeight,
+		settings.domeHeight,
+		segments,
+		settings.domeRings,
+		settings.domeMaterial,
+		settings.domeColor
+	)
+
+	return arena, centerPosition
+end
+
+----------------------------------------------------------------------
+-- ROOM B: BLADES
+----------------------------------------------------------------------
+
+local function buildRoomB(root, entrancePosition, forward)
+	local settings = {
+		radius = CONFIG.roomB.radius,
+		wallHeight = CONFIG.roomB.wallHeight,
+		wallSegments = CONFIG.roomB.wallSegments,
+		domeHeight = CONFIG.roomB.domeHeight,
+		domeRings = 5,
+		wallMaterial = CONFIG.materials.wall,
+		wallColor = CONFIG.colors.wall,
+		domeMaterial = CONFIG.materials.dome,
+		domeColor = CONFIG.colors.domeB,
+	}
+
+	local room, center = buildArena(
+		root,
+		"RoomB_Blades",
+		entrancePosition,
+		forward,
+		settings
+	)
+
+	newPart({
+		Name = "GolemDais",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(2, 24, 24),
+		CFrame = CFrame.new(center + Vector3.new(0, 1, 0))
+			* CFrame.Angles(0, 0, math.rad(90)),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = room,
+	})
+
+	local golem = newFolder(room, "GolemPlaceholder")
+
+	local parts = {
+		{
+			name = "Legs",
+			size = Vector3.new(4, 3, 3),
+			offset = Vector3.new(0, 3.5, 0),
+		},
+		{
+			name = "Torso",
+			size = Vector3.new(5, 4, 3.5),
+			offset = Vector3.new(0, 7, 0),
+		},
+		{
+			name = "Head",
+			size = Vector3.new(2, 2, 2),
+			offset = Vector3.new(0, 10, 0),
+		},
+	}
+
+	for _, partInfo in ipairs(parts) do
+		newPart({
+			Name = partInfo.name,
+			Size = partInfo.size,
+			CFrame = CFrame.new(center + partInfo.offset),
+			Material = CONFIG.materials.rubble,
+			Color = CONFIG.colors.statue,
+			Parent = golem,
+		})
+	end
+
+	local coreOffsets = {
+		Vector3.new(0, 7, -2),
+		Vector3.new(-2.7, 7, 0),
+		Vector3.new(2.7, 7, 0),
+	}
+
+	for index, offset in ipairs(coreOffsets) do
+		local core = newPart({
+			Name = "Core" .. index,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1.2, 1.2, 1.2),
+			CFrame = CFrame.new(center + offset),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.crystal,
+			CanCollide = false,
+			CanQuery = false,
+			Parent = golem,
+		})
+
+		addGlow(core, CONFIG.colors.crystal, 10, 2)
+	end
+
+	for index = 0, 7 do
+		local angle = math.rad(index * 45)
+		local position = center + Vector3.new(
+			math.cos(angle) * 27,
+			0,
+			math.sin(angle) * 27
+		)
+
+		newPart({
+			Name = "Statue_" .. (index + 1),
+			Size = Vector3.new(2.5, 7, 2.5),
+			CFrame = CFrame.new(position + Vector3.new(0, 3.5, 0)),
+			Material = Enum.Material.Concrete,
+			Color = CONFIG.colors.statue,
+			Parent = room,
+		})
+	end
+
+	return room
+end
+
+----------------------------------------------------------------------
+-- ROOM C: ORRERY
+----------------------------------------------------------------------
+
+local function buildRoomC(root, entrancePosition, forward)
+	local settings = {
+		radius = CONFIG.roomC.radius,
+		wallHeight = CONFIG.roomC.wallHeight,
+		wallSegments = CONFIG.roomC.wallSegments,
+		domeHeight = CONFIG.roomC.domeHeight,
+		domeRings = 7,
+		wallMaterial = Enum.Material.Basalt,
+		wallColor = CONFIG.colors.wallC,
+		domeMaterial = Enum.Material.Basalt,
+		domeColor = CONFIG.colors.domeC,
+	}
+
+	local room, center = buildArena(
+		root,
+		"RoomC_Orrery",
+		entrancePosition,
+		forward,
+		settings
+	)
+
+	newPart({
+		Name = "HeartDais",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(2, 20, 20),
+		CFrame = CFrame.new(center + Vector3.new(0, 1, 0))
+			* CFrame.Angles(0, 0, math.rad(90)),
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = room,
+	})
+
+	local heart = newPart({
+		Name = "CrystalHeart",
+		Size = Vector3.new(3, 5, 3),
+		CFrame = CFrame.new(center + Vector3.new(0, 5, 0))
+			* CFrame.Angles(math.rad(45), math.rad(45), 0),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.crystal,
+		CanCollide = false,
+		CanQuery = false,
+		Parent = room,
+	})
+
+	addGlow(heart, CONFIG.colors.crystal, 30, 3)
+
+	for index = 1, 6 do
+		local angle = math.rad((index / 6) * 360)
+		local mote = newPart({
+			Name = "MotePlaceholder_" .. index,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1.2, 1.2, 1.2),
+			CFrame = CFrame.new(
+				center + Vector3.new(
+					math.cos(angle) * 12,
+					5,
+					math.sin(angle) * 12
+				)
+			),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.portal,
+			Transparency = 0.15,
+			CanCollide = false,
+			CanQuery = false,
+			Parent = room,
+		})
+
+		addGlow(mote, CONFIG.colors.portal, 8, 1.5)
+	end
+
+	for index = 1, 40 do
+		local theta = math.rad(5 + random:NextNumber() * 80)
+		local phi = math.rad(random:NextNumber() * 360)
+
+		local radius = math.max(
+			0,
+			(CONFIG.roomC.radius - 2) * math.cos(theta)
+		)
+
+		local height =
+			CONFIG.roomC.wallHeight
+			+ CONFIG.roomC.domeHeight * math.sin(theta)
+			- 0.3
+
+		newPart({
+			Name = "Star_" .. index,
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(0.35, 0.35, 0.35),
+			CFrame = CFrame.new(
+				center + Vector3.new(
+					math.cos(phi) * radius,
+					height,
+					math.sin(phi) * radius
+				)
+			),
+			Material = CONFIG.materials.neon,
+			Color = CONFIG.colors.star,
+			CanCollide = false,
+			CanQuery = false,
+			CastShadow = false,
+			Parent = room,
+		})
+	end
+
+	return room
+end
+
+----------------------------------------------------------------------
+-- MAIN BUILD
+----------------------------------------------------------------------
+
+local function main()
+	local oldDraft = Workspace:FindFirstChild("TrialChamberV2")
+
+	if oldDraft then
+		oldDraft:Destroy()
+	end
+
+	local originalFloorPosition = getExistingChamberFloorPosition()
+	local basePosition = originalFloorPosition + CONFIG.draftOffset
+
+	local root = Instance.new("Model")
+	root.Name = "TrialChamberV2"
+	root.Parent = Workspace
+
+	-- Matches the screenshot's three-branch arrangement:
+	-- Room A: lower-left, Room B: upper-left, Room C: upper-right.
+	local branches = {
+		{
+			name = "A",
+			forward = Vector3.new(-1, 0, 1).Unit,
+			roomName = "RoomA",
+		},
+		{
+			name = "B",
+			forward = Vector3.new(-1, 0, -1).Unit,
+			roomName = "RoomB",
+		},
+		{
+			name = "C",
+			forward = Vector3.new(1, 0, -1).Unit,
+			roomName = "RoomC",
+		},
+	}
+
+	buildCentralHub(root, basePosition, branches)
+
+	for _, branch in ipairs(branches) do
+		local corridorStart =
+			basePosition
+			+ branch.forward * (CONFIG.hub.radius - 1)
+
+		buildCorridor(
+			root,
+			"Hallway_" .. branch.roomName,
+			corridorStart,
+			branch.forward,
+			CONFIG.corridor.length
+		)
+
+		local roomEntrance =
+			corridorStart
+			+ branch.forward * CONFIG.corridor.length
+
+		if branch.name == "A" then
+			buildRoomA(root, roomEntrance, branch.forward)
+		elseif branch.name == "B" then
+			buildBarredGate(
+				root,
+				"RoomB_LockGate",
+				corridorStart + branch.forward * 5,
+				branch.forward,
+				CONFIG.corridor.width - 2,
+				CONFIG.corridor.height - 2
+			)
+
+			buildRoomB(root, roomEntrance, branch.forward)
+		elseif branch.name == "C" then
+			buildBarredGate(
+				root,
+				"RoomC_LockGate",
+				corridorStart + branch.forward * 5,
+				branch.forward,
+				CONFIG.corridor.width - 2,
+				CONFIG.corridor.height - 2
+			)
+
+			buildRoomC(root, roomEntrance, branch.forward)
+		end
+	end
+
+	print("[TrialChamberV2] Hub-and-spoke draft created safely.")
+	print("[TrialChamberV2] Original Workspace.TrialChamber was not changed.")
+end
+
+main()
