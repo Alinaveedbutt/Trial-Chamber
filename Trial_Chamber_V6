@@ -44,6 +44,12 @@ local CONFIG = {
 		connectorSpacingMin = 8,
 		connectorSpacingMax = 11,
 		connectorHubClearance = 5,
+		-- Fixed seeds for the hazard layout -- same layout every run,
+		-- for every player, but changing either number reshuffles that
+		-- run's arrangement into a different (still fixed) one. Change
+		-- these first if you want to try another layout.
+		connectorHazardSeed = 20260930,
+		hazardSeed = 20260931,
 	},
 
 	roomB = {
@@ -1886,7 +1892,12 @@ local function generateRoomAConnectorHazards(parent, corridorStart, forward, cor
 	local width = CONFIG.corridor.width
 	local height = CONFIG.corridor.height
 	local roomCfg = CONFIG.roomA
-	local hazardRandom = Random.new()
+	-- Fixed seed: Random.new() with no argument seeds from the current
+	-- time, so the hazard order changed on every run. A fixed seed
+	-- makes the layout (which encounter lands where) identical every
+	-- time the script runs, for every player, while still picking
+	-- pseudo-randomly from the full mix of hazard types below.
+	local hazardRandom = Random.new(roomCfg.connectorHazardSeed)
 	local right = getRight(forward)
 	local leftWallOrigin = corridorStart - right * (width / 2)
 	local rightWallOrigin = corridorStart + right * (width / 2)
@@ -2025,7 +2036,10 @@ local function generateRoomAObstacleCourse(room, entrancePosition, forward, leng
 	local leftWallOrigin = entrancePosition - right * (width / 2)
 	local rightWallOrigin = entrancePosition + right * (width / 2)
 	local roomCfg = CONFIG.roomA
-	local hazardRandom = Random.new()
+	-- Same fix as the connector RNG above: a fixed seed makes the whole
+	-- room's hazard layout deterministic across every run and every
+	-- player, instead of reshuffling each time the script executes.
+	local hazardRandom = Random.new(roomCfg.hazardSeed)
 
 	local trapIndex = 1
 	local bladeIndex = 1
