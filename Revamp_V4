@@ -1,0 +1,3190 @@
+print('TrialChamberV2 Linear Generator starting...')
+--[[
+	TRIAL CHAMBER V2 - LINEAR PROGRESSION
+	--------------------------------------
+	Safe architectural generator:
+	- Does NOT modify Workspace.TrialChamber.
+	- Rebuilds only Workspace.TrialChamberV2 on each run.
+	- Linear progression: START -> A -> B -> C -> D -> SUMMIT -> EXIT
+]]
+
+local Workspace = game:GetService('Workspace')
+local CollectionService = game:GetService('CollectionService')
+local RunService = game:GetService('RunService')
+
+local CONFIG = {
+    layout = {
+        origin = Vector3.new(0, 0, 400),  -- draft offset from original chamber
+        progressionAxis = Vector3.new(0, 0, 1),  -- rooms advance along +Z
+        roomGap = 4,            -- gap between transition end and next room start
+        verticalStep = 2,       -- slight Y increase per transition
+    },
+
+    roomA = {
+        width = 18,
+        height = 18,
+        length = 205,
+        hazardStart = 4,         -- distance from entrance before first hazard
+        hazardEndOffset = 28,    -- distance from exit wall where hazards stop
+        spacingMin = 10,         -- min distance between hazards
+        spacingMax = 14,         -- max distance between hazards
+        entranceGauntletEnd = 42,
+        hazardSeed = 20260931,
+        connectorHazardSeed = 20260930,
+        connectorSpacingMin = 8,
+        connectorSpacingMax = 11,
+        connectorHubClearance = 5,
+        -- Progressive spacing: comfortable early, tighter but always fair
+        -- late. All three zones stay above the physical safety floor
+        -- (trapFootprint + clearance) enforced in buildRoomA, so this
+        -- controls *feel*, never playability.
+        spacingZones = {
+            earlyFraction = 0.35,
+            midFraction = 0.72,
+            earlyMin = 22, earlyMax = 30,
+            midMin = 17, midMax = 22,
+            lateMin = 15, lateMax = 18,
+        },
+        lateralWeaveMax = 2.5,          -- gentle side-to-side weave on later spike traps (zig-zag feel)
+        closingDoorTriggerOffset = 20,  -- distance before the exit portcullis where the closing-door climax begins
+    },
+
+    roomB = {
+        radius = 35,              -- octagonal radius (70 diameter)
+        wallHeight = 25,
+        waterChannelWidth = 4,    -- perimeter water channel width
+        waterDepth = 0.6,         -- water visual depth
+        golemPedestalRadius = 4,  -- central golem pedestal
+        golemHeight = 12,         -- golem total height
+        coreRadius = 0.9,         -- golem core orb size
+        statueCount = 4,          -- corner statues
+        -- The golem is a pre-built 3D model, not procedural geometry.
+        -- The generator only places a spawn marker + (optionally) clones
+        -- a model already sitting in ServerStorage so the encounter script
+        -- can find it without the generator needing to know how it's rigged.
+        golemStorageService = "ServerStorage",
+        golemModelName = "GolemGuardian",
+    },
+
+    -- Global vegetation system: reused by every room so algae/moss/vines
+    -- read as one consistent overgrowth language rather than isolated
+    -- green rectangles. "density" is a relative multiplier a room can use
+    -- to scale how many clusters it scatters.
+    vegetation = {
+        clusterMossCount = {2, 4},   -- min/max moss patches per cluster
+        clusterVineChance = 0.55,    -- chance a cluster also gets a hanging vine
+        mossSizeMin = 1.5,
+        mossSizeMax = 4.5,
+        density = {
+            roomA = 0.7,
+            roomB = 1.0,
+            roomC = 1.6,   -- sanctuary: heaviest overgrowth
+            roomD = 1.1,
+        },
+    },
+
+    roomC = {
+        radius = 36,
+        wallHeight = 24,
+        archCount = 8,            -- number of stone arches
+        archWidth = 8,
+        archHeight = 16,
+        poolRadius = 20,          -- water pool radius
+        poolDepth = 0.8,
+        daisRadius = 6,           -- central pedestal platform
+        daisHeight = 2.5,
+        crystalHeight = 4,        -- Heart Crystal size
+        crystalWidth = 2,
+    },
+
+    roomD = {
+        -- SECTION 0: horizontal ruined approach connecting the collapse
+        -- passage to the base of the ascent shaft. This is what gives
+        -- Room D real longitudinal depth, not just height.
+        approachLength = 74,
+        approachWidth = 22,
+        approachHeight = 20,
+
+        -- The vertical shaft: a fixed footprint the climbing path
+        -- switches back and forth within as it rises.
+        shaftWidth = 52,          -- extent along the right axis
+        wallThickness = 3,
+
+        -- SECTIONS 1-6: the climbing legs, stacked bottom to top.
+        -- Each leg gains height AND creeps the shaft forward, so the
+        -- ascent reads as a real switchback through a ruin, not a
+        -- straight elevator shaft.
+        legCount = 6,
+        legHeightMin = 27,
+        legHeightMax = 37,
+        legForwardAdvance = 13,   -- forward creep per leg
+        lateralSwing = 16,        -- how far each landing swings off-center
+
+        landingSize = 11,         -- width/depth of each waypoint platform
+        chainLinkSize = Vector3.new(0.5, 1.15, 0.5),
+
+        -- SECTION 8: final stair from the last landing up into the Summit
+        finalStairLength = 26,
+        finalStairHeight = 16,
+
+        seed = 20260935,
+        parkour = {
+            maxHorizontalGap = 12,
+            maxVerticalGap = 9,
+            minLandingSize = 6,    -- minimum platform dimension
+            platformDepth = 8,     -- standard platform depth
+        },
+        echoCount = 5,            -- warrior echo trigger count
+        muralCount = 4,           -- dragon mural count
+        warriorCount = 9,         -- dead warrior set-pieces scattered through the ascent
+    },
+
+    summit = {
+        width = 60,
+        depth = 60,
+        wallHeight = 6,
+    },
+
+    transitions = {
+        corridorWidth = 16,
+        corridorHeight = 18,
+        wallThickness = 1,
+        standardLength = 24,
+        collapseLength = 36,
+    },
+
+    materials = {
+        floor = Enum.Material.Slate,
+        wall = Enum.Material.Cobblestone,
+        dome = Enum.Material.Basalt,
+        rubble = Enum.Material.Rock,
+        metal = Enum.Material.Metal,
+        neon = Enum.Material.Neon,
+        trim = Enum.Material.Concrete,
+        torchWood = Enum.Material.Wood,
+        wood = Enum.Material.WoodPlanks,
+        spikeSteel = Enum.Material.CorrodedMetal,
+        water = Enum.Material.Glass,
+        moss = Enum.Material.Grass,
+        vine = Enum.Material.Grass,
+    },
+
+    colors = {
+        floor = Color3.fromRGB(58, 58, 63),
+        wall = Color3.fromRGB(72, 70, 75),
+        wallDark = Color3.fromRGB(42, 46, 60),
+        metal = Color3.fromRGB(35, 35, 40),
+        rubble = Color3.fromRGB(80, 76, 70),
+        crystal = Color3.fromRGB(255, 185, 45),   -- golden Heart Crystal
+        crystalGlow = Color3.fromRGB(255, 200, 80),
+        portal = Color3.fromRGB(120, 190, 255),
+        statue = Color3.fromRGB(90, 90, 95),
+        torch = Color3.fromRGB(255, 140, 60),
+        danger = Color3.fromRGB(92, 35, 35),
+        trim = Color3.fromRGB(50, 48, 53),
+        torchWood = Color3.fromRGB(46, 33, 23),
+        ancientStone = Color3.fromRGB(54, 56, 52),
+        wood = Color3.fromRGB(92, 64, 39),
+        spikeSteel = Color3.fromRGB(52, 54, 58),
+        spring = Color3.fromRGB(118, 120, 126),
+        counterweight = Color3.fromRGB(40, 40, 44),
+        water = Color3.fromRGB(60, 120, 140),
+        waterShallow = Color3.fromRGB(80, 150, 160),
+        moss = Color3.fromRGB(62, 85, 45),
+        vine = Color3.fromRGB(45, 75, 35),
+        mossLight = Color3.fromRGB(75, 100, 55),
+        sacred = Color3.fromRGB(255, 210, 100),
+        crack = Color3.fromRGB(255, 120, 40),
+        fog = Color3.fromRGB(180, 190, 200),
+        chainMetal = Color3.fromRGB(70, 68, 65),
+        golemCore = Color3.fromRGB(255, 100, 30),
+        golemStone = Color3.fromRGB(75, 73, 70),
+        skyLight = Color3.fromRGB(255, 245, 220),
+        banner = Color3.fromRGB(38, 66, 102),
+        bannerTrim = Color3.fromRGB(200, 170, 90),
+    },
+
+    detail = {
+        pillarInset = 0.4,
+        pillarSize = 2.2,
+        corniceHeight = 1.1,
+        corniceDrop = 0.65,
+        corniceProud = 0.5,
+        baseboardHeight = 1.6,
+        baseboardProud = 0.45,
+        beamThickness = 1.2,
+        beamDepth = 1.8,
+        beamDrop = 0.6,
+        beamSpacing = 13,
+        torchSpacing = 17,
+        torchHeight = 8.5,
+    },
+
+    spikeTrap = {
+        width = 11,
+        depth = 9,
+        housingMargin = 2.1,
+        housingLowHeight = 0.9,
+        housingCapHeight = 0.55,
+        pitDepth = 1.6,
+        frameThickness = 0.9,
+        plankCount = 6,
+        plankGap = 0.4,
+        spikeCols = 3,
+        spikeBaseRadius = 0.5,
+        spikeHeight = 2.8,
+        spikeSegments = 4,
+        springCoils = 4,
+        restOffsetY = -1.0,
+        extendOffsetY = 3.4,
+        cycleSeconds = 4.5,
+        damage = 34,
+    },
+
+    swingingBlade = {
+        mountDrop = 3.0,
+        axleLength = 3.2,
+        armLength = 11,
+        bladeRadius = 3.2,
+        counterArmLength = 1.3,
+        counterweightRadius = 0.85,
+        chainLinks = 5,
+        swingDegrees = 42,
+        periodSeconds = 3.2,
+        damage = 40,
+    },
+
+    portcullis = {
+        verticalBars = 7,
+        horizontalBars = 4,
+        leafHeightRatio = 0.5,
+    },
+
+    lighting = {
+        torchRange = 14,
+        torchBrightness = 2.5,
+        crystalRange = 28,
+        crystalBrightness = 3,
+        sunlightRange = 20,
+        sunlightBrightness = 1.5,
+        sacredRange = 24,
+        sacredBrightness = 2.5,
+    },
+}
+
+local random = Random.new(20260802)
+
+local function unitXZ(vector)
+    local v = Vector3.new(vector.X, 0, vector.Z)
+    if v.Magnitude > 0.001 then
+        return v.Unit
+    else
+        return Vector3.new(0, 0, -1)
+    end
+end
+
+local function getRight(forward)
+    local fwd = unitXZ(forward)
+    return Vector3.new(fwd.Z, 0, -fwd.X)
+end
+
+local function orientedCFrame(position, forward)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    return CFrame.fromMatrix(position, right, Vector3.new(0, 1, 0), -fwd)
+end
+
+local function newFolder(parent, name)
+    local folder = Instance.new("Folder")
+    folder.Name = name
+    folder.Parent = parent
+    return folder
+end
+
+local function newPart(properties)
+    local part = Instance.new("Part")
+    part.Anchored = true
+    for k, v in pairs(properties) do
+        part[k] = v
+    end
+    return part
+end
+
+local function addGlow(part, color, range, brightness)
+    local light = Instance.new("PointLight")
+    light.Color = color
+    light.Range = range
+    light.Brightness = brightness
+    light.Parent = part
+    return light
+end
+
+local function addOrientedPart(parent, name, size, position, forward, material, color, options)
+    local props = {
+        Name = name,
+        Size = size,
+        CFrame = orientedCFrame(position, forward),
+        Material = material,
+        Color = color,
+        Parent = parent
+    }
+    if options then
+        for k, v in pairs(options) do
+            props[k] = v
+        end
+    end
+    return newPart(props)
+end
+
+local function horizontalAxisCFrame(position, axisDirection)
+    local fwd = unitXZ(axisDirection)
+    return CFrame.fromMatrix(position, fwd, Vector3.new(0, 1, 0))
+end
+
+local function addPilaster(parent, name, floorPosition, forward, height, material, color)
+    -- A pilaster is the single most-repeated architectural element in
+    -- the whole chamber (every bay boundary, every octagon corner, every
+    -- gate). Making this one builder read as genuine load-bearing
+    -- masonry -- stepped base, necking band, overhanging capital --
+    -- raises the perceived quality of every room that uses it.
+    local model = newFolder(parent, name)
+    local right = getRight(forward)
+    local fwd = unitXZ(forward)
+    
+    local w = CONFIG.detail.pillarSize
+    local d = CONFIG.detail.pillarSize * 0.5
+    local pos = floorPosition + Vector3.new(0, height/2, 0)
+    addOrientedPart(model, "Shaft", Vector3.new(w, height, d), pos, fwd, material, color)
+
+    -- Stepped base -- reads as load-bearing rather than applied trim
+    addOrientedPart(model, "Base", Vector3.new(w + 0.7, 1.0, d + 0.5), floorPosition + Vector3.new(0, 0.5, 0) + fwd*0.12, fwd, material, CONFIG.colors.ancientStone)
+
+    -- Necking band just under the capital -- the carved detail that
+    -- separates "architecture" from "a plain post"
+    addOrientedPart(model, "Necking", Vector3.new(w + 0.25, 0.3, d + 0.15), floorPosition + Vector3.new(0, height - 1.1, 0) + fwd*0.08, fwd, material, CONFIG.colors.ancientStone)
+
+    -- Capital -- wider overhang than before, reads as a real load-bearing cap
+    addOrientedPart(model, "Capital", Vector3.new(w + 1.0, 0.9, d + 0.7), floorPosition + Vector3.new(0, height - 0.3, 0) + fwd*0.14, fwd, material, CONFIG.colors.ancientStone)
+    
+    return model
+end
+
+local function addCorniceBand(parent, name, floorPosition, forward, length, wallHeight, material, color)
+    local pos = floorPosition + Vector3.new(0, wallHeight - CONFIG.detail.corniceDrop, 0)
+    local w = length
+    local h = CONFIG.detail.corniceHeight
+    local d = CONFIG.detail.corniceProud
+    return addOrientedPart(parent, name, Vector3.new(w, h, d), pos, forward, material, color)
+end
+
+local function addBaseboardBand(parent, name, floorPosition, forward, length, material, color)
+    local pos = floorPosition + Vector3.new(0, CONFIG.detail.baseboardHeight/2, 0)
+    local w = length
+    local h = CONFIG.detail.baseboardHeight
+    local d = CONFIG.detail.baseboardProud
+    return addOrientedPart(parent, name, Vector3.new(w, h, d), pos, forward, material, color)
+end
+
+local function addCeilingBeam(parent, name, centerPosition, forward, span, ceilingHeight, material, color)
+    local pos = centerPosition + Vector3.new(0, ceilingHeight - CONFIG.detail.beamDrop, 0)
+    local w = span
+    local h = CONFIG.detail.beamThickness
+    local d = CONFIG.detail.beamDepth
+    return addOrientedPart(parent, name, Vector3.new(w, h, d), pos, forward, material, color)
+end
+
+----------------------------------------------------------------------
+-- CEILING SUPPORT BEAM (beam + corbels bridging down to the walls)
+----------------------------------------------------------------------
+-- A plain beam floating under a flat ceiling reads as decoration. Two
+-- small corbel brackets at the beam's ends, sitting where the beam
+-- meets the wall tops, is what makes "the ceiling relates to the
+-- walls" instead of the walls and ceiling looking independently built.
+local function buildCeilingSupportBeam(parent, name, centerPosition, spanAxis, span, ceilingHeight, beamMaterial, beamColor, corbelMaterial, corbelColor)
+    local model = newFolder(parent, name)
+    addCeilingBeam(model, "Beam", centerPosition, spanAxis, span, ceilingHeight, beamMaterial, beamColor)
+    local axis = unitXZ(spanAxis)
+    local corbelY = ceilingHeight - CONFIG.detail.beamDrop - CONFIG.detail.beamThickness/2 - 0.6
+    for _, sign in ipairs({1, -1}) do
+        local cPos = centerPosition + axis * (sign * (span/2 - 0.6)) + Vector3.new(0, corbelY, 0)
+        addOrientedPart(model, sign > 0 and "CorbelA" or "CorbelB", Vector3.new(1.4, 1.2, 1.4), cPos, axis, corbelMaterial, corbelColor)
+    end
+    return model
+end
+
+local function layCeilingBeams(parent, namePrefix, originPosition, forward, span, ceilingHeight, startDistance, endDistance, material, color)
+    local dist = startDistance
+    local i = 1
+    local right = getRight(forward)
+    while dist <= endDistance do
+        local pos = originPosition + forward * dist
+        addCeilingBeam(parent, namePrefix .. "_" .. i, pos, right, span, ceilingHeight, material, color)
+        dist = dist + CONFIG.detail.beamSpacing
+        i = i + 1
+    end
+end
+
+local function addWallTorch(parent, name, floorPosition, forward, mountHeight)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local pos = floorPosition + Vector3.new(0, mountHeight, 0)
+    
+    addOrientedPart(model, "Bracket", Vector3.new(0.5, 0.5, 1.2), pos + fwd*0.6, fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    addOrientedPart(model, "Stick", Vector3.new(0.3, 2, 0.3), pos + fwd*1.0 + Vector3.new(0,0.5,0), fwd, CONFIG.materials.torchWood, CONFIG.colors.torchWood)
+    
+    local flame = addOrientedPart(model, "Flame", Vector3.new(0.4, 0.6, 0.4), pos + fwd*1.0 + Vector3.new(0,1.7,0), fwd, CONFIG.materials.neon, CONFIG.colors.torch, {CanCollide=false, CanQuery=false})
+    addGlow(flame, CONFIG.colors.torch, CONFIG.lighting.torchRange, CONFIG.lighting.torchBrightness)
+    
+    return model
+end
+
+local function layWallTorches(parent, namePrefix, wallOriginPosition, travelForward, faceDirection, startDistance, endDistance)
+    local dist = startDistance
+    local i = 1
+    while dist <= endDistance do
+        local pos = wallOriginPosition + travelForward * dist
+        addWallTorch(parent, namePrefix .. "_" .. i, pos, faceDirection, CONFIG.detail.torchHeight)
+        dist = dist + CONFIG.detail.torchSpacing
+        i = i + 1
+    end
+end
+
+local function addRubblePile(parent, name, centerPosition, chunkCount, spreadRadius)
+    local model = newFolder(parent, name)
+    for i=1, chunkCount do
+        local size = Vector3.new(random:NextNumber(0.5,2), random:NextNumber(0.5,2), random:NextNumber(0.5,2))
+        local offX = random:NextNumber(-spreadRadius, spreadRadius)
+        local offZ = random:NextNumber(-spreadRadius, spreadRadius)
+        local offY = size.Y/2
+        local pos = centerPosition + Vector3.new(offX, offY, offZ)
+        local part = newPart({
+            Name = "Chunk_"..i,
+            Size = size,
+            CFrame = CFrame.new(pos) * CFrame.Angles(random:NextNumber(0,math.pi*2), random:NextNumber(0,math.pi*2), random:NextNumber(0,math.pi*2)),
+            Material = CONFIG.materials.rubble,
+            Color = CONFIG.colors.rubble,
+            Parent = model
+        })
+    end
+    return model
+end
+
+local function addDomeCap(parent, centerPosition, wallHeight, domeHeight, material, color)
+    local pos = centerPosition + Vector3.new(0, wallHeight + domeHeight, 0)
+    local part = newPart({
+        Name = "DomeCap",
+        Size = Vector3.new(4, 4, 4),
+        CFrame = CFrame.new(pos),
+        Shape = Enum.PartType.Ball,
+        Material = material,
+        Color = color,
+        Parent = parent
+    })
+    return part
+end
+
+local function buildAncientWall(parent, name, floorPosition, forward, length, height, thickness, material, color)
+    local pos = floorPosition + Vector3.new(0, height/2, 0)
+    return addOrientedPart(parent, name, Vector3.new(length, height, thickness), pos, forward, material, color)
+end
+
+----------------------------------------------------------------------
+-- FLOOR MASONRY (large slab + border strip)
+----------------------------------------------------------------------
+-- A coherent stone floor reads as one large slab bordered by a trim
+-- strip along its edges -- NOT a noisy checkerboard, and not a single
+-- featureless plane either. Kept to 3 parts so it stays cheap even
+-- called once per architectural bay.
+local function buildFloorMasonry(parent, name, centerPosition, forward, width, length, material, color, borderColor)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    addOrientedPart(model, "Slab", Vector3.new(width, 1, length), centerPosition + Vector3.new(0, -0.5, 0), fwd, material, color)
+    local borderW = 0.5
+    addOrientedPart(model, "BorderL", Vector3.new(borderW, 0.06, length), centerPosition - right * (width/2 - borderW/2) + Vector3.new(0, 0.03, 0), fwd, material, borderColor, {CanCollide = false})
+    addOrientedPart(model, "BorderR", Vector3.new(borderW, 0.06, length), centerPosition + right * (width/2 - borderW/2) + Vector3.new(0, 0.03, 0), fwd, material, borderColor, {CanCollide = false})
+    return model
+end
+
+local function buildAncientArch(parent, name, floorPosition, forward, width, height, material, color)
+    local model = newFolder(parent, name)
+    local right = getRight(forward)
+    local colW = 2
+    local colPos1 = floorPosition + right * (width/2)
+    local colPos2 = floorPosition - right * (width/2)
+    
+    addOrientedPart(model, "Pillar1", Vector3.new(colW, height, colW), colPos1 + Vector3.new(0, height/2, 0), forward, material, color)
+    addOrientedPart(model, "Pillar2", Vector3.new(colW, height, colW), colPos2 + Vector3.new(0, height/2, 0), forward, material, color)
+    
+    local archHeight = 3
+    local lintelPos = floorPosition + Vector3.new(0, height + archHeight/2, 0)
+    addOrientedPart(model, "Lintel", Vector3.new(width + colW, archHeight, colW), lintelPos, forward, material, color)
+    return model
+end
+
+local function buildStonePillar(parent, name, basePosition, height, radius, material, color, broken)
+    local model = newFolder(parent, name)
+    local finalHeight = height
+    if broken then
+        finalHeight = random:NextNumber(height*0.2, height*0.7)
+    end
+    
+    local pos = basePosition + Vector3.new(0, finalHeight/2, 0)
+    local part = newPart({
+        Name = "PillarBase",
+        Size = Vector3.new(radius*2, finalHeight, radius*2),
+        CFrame = CFrame.new(pos),
+        Shape = Enum.PartType.Cylinder,
+        Material = material,
+        Color = color,
+        Parent = model
+    })
+    
+    if broken then
+        addRubblePile(model, "PillarRubble", basePosition, math.floor(radius*4), radius*1.5)
+    end
+    
+    return model
+end
+
+local function buildMossPatch(parent, name, position, forward, width, depth)
+    local cf = orientedCFrame(position, forward)
+    local part = newPart({
+        Name = name,
+        Size = Vector3.new(width, 0.1, depth),
+        CFrame = cf,
+        Material = CONFIG.materials.moss,
+        Color = CONFIG.colors.moss,
+        CanCollide = false,
+        CanQuery = false,
+        Parent = parent
+    })
+    return part
+end
+
+local function buildVineStrip(parent, name, topPosition, length)
+    local w = 0.4
+    local d = 0.1
+    local pos = topPosition - Vector3.new(0, length/2, 0)
+    local part = newPart({
+        Name = name,
+        Size = Vector3.new(w, length, d),
+        CFrame = CFrame.new(pos) * CFrame.Angles(0, random:NextNumber(0, math.pi*2), 0),
+        Material = CONFIG.materials.vine,
+        Color = CONFIG.colors.vine,
+        CanCollide = false,
+        CanQuery = false,
+        Parent = parent
+    })
+    return part
+end
+
+local function buildWaterPool(parent, name, centerPosition, width, depth, poolDepth)
+    local pos = centerPosition - Vector3.new(0, poolDepth/2, 0)
+    local part = newPart({
+        Name = name,
+        Size = Vector3.new(width, poolDepth, depth),
+        CFrame = CFrame.new(pos),
+        Material = CONFIG.materials.water,
+        Color = CONFIG.colors.water,
+        Transparency = 0.5,
+        CanCollide = true,
+        Parent = parent
+    })
+    return part
+end
+
+local function buildWaterChannel(parent, name, startPosition, forward, length, channelWidth, channelDepth)
+    local pos = startPosition + unitXZ(forward)*(length/2) - Vector3.new(0, channelDepth/2, 0)
+    return addOrientedPart(parent, name, Vector3.new(channelWidth, channelDepth, length), pos, forward, CONFIG.materials.water, CONFIG.colors.waterShallow, {Transparency=0.4, CanCollide=true})
+end
+
+local STATUE_POSES = {
+    standing = {armPitch = 0, legScale = 1},
+    reaching = {armPitch = math.pi/2, legScale = 1},
+    collapsed = {armPitch = -math.pi/4, legScale = 0.6},
+    kneeling = {armPitch = -math.pi/8, legScale = 0.45},
+    climbing = {armPitch = math.pi/3, legScale = 1},
+    guarding = {armPitch = -math.pi/10, legScale = 1},
+}
+
+local function buildStatue(parent, name, basePosition, forward, height, pose)
+    local model = newFolder(parent, name)
+    local mat = CONFIG.materials.wall
+    local col = CONFIG.colors.statue
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local pd = STATUE_POSES[pose] or STATUE_POSES.standing
+    
+    local pedH = height * 0.15
+    addOrientedPart(model, "Pedestal", Vector3.new(height*0.4, pedH, height*0.4), basePosition + Vector3.new(0, pedH/2, 0), fwd, mat, col)
+    
+    local legH = height * 0.35 * pd.legScale
+    local torsoH = height * 0.35
+    local headS = height * 0.15
+    local legW = height * 0.15
+    
+    local legPosY = basePosition.Y + pedH + legH/2
+    local lLegPos = Vector3.new(basePosition.X, legPosY, basePosition.Z) - right*(legW/2)
+    local rLegPos = Vector3.new(basePosition.X, legPosY, basePosition.Z) + right*(legW/2)
+    
+    addOrientedPart(model, "LeftLeg", Vector3.new(legW*0.8, legH, legW*0.8), lLegPos, fwd, mat, col)
+    addOrientedPart(model, "RightLeg", Vector3.new(legW*0.8, legH, legW*0.8), rLegPos, fwd, mat, col)
+    
+    local torsoPos = basePosition + Vector3.new(0, pedH + legH + torsoH/2, 0)
+    addOrientedPart(model, "Torso", Vector3.new(height*0.35, torsoH, height*0.2), torsoPos, fwd, mat, col)
+    
+    local headPos = basePosition + Vector3.new(0, pedH + legH + torsoH + headS/2, 0)
+    addOrientedPart(model, "Head", Vector3.new(headS, headS, headS), headPos, fwd, mat, col)
+    
+    local armW = height * 0.1
+    local armL = height * 0.35
+    local lArmPos = torsoPos - right*(height*0.25)
+    local rArmPos = torsoPos + right*(height*0.25)
+    
+    local armPitch = pd.armPitch
+    
+    local lArmCF = orientedCFrame(lArmPos, fwd) * CFrame.Angles(armPitch, 0, 0) * CFrame.new(0, -armL/2, 0)
+    local lArm = newPart({Name="LeftArm", Size=Vector3.new(armW, armL, armW), CFrame=lArmCF, Material=mat, Color=col, Parent=model})
+    
+    local rArmCF = orientedCFrame(rArmPos, fwd) * CFrame.Angles(armPitch, 0, 0) * CFrame.new(0, -armL/2, 0)
+    local rArm = newPart({Name="RightArm", Size=Vector3.new(armW, armL, armW), CFrame=rArmCF, Material=mat, Color=col, Parent=model})
+    
+    return model
+end
+
+local function buildChainSegment(parent, name, topPosition, bottomPosition, linkCount)
+    local model = newFolder(parent, name)
+    local diff = bottomPosition - topPosition
+    local len = diff.Magnitude
+    local fwd = unitXZ(diff)
+    if fwd.Magnitude < 0.001 then fwd = Vector3.new(1,0,0) end
+    
+    local step = len / linkCount
+    local size = CONFIG.roomD.chainLinkSize
+    
+    for i=1, linkCount do
+        local fraction = (i - 0.5) / linkCount
+        local pos = topPosition + diff * fraction
+        local orient = CFrame.new(pos, pos + diff)
+        if i % 2 == 0 then
+            orient = orient * CFrame.Angles(0, 0, math.pi/2)
+        end
+        newPart({
+            Name = "Link_"..i,
+            Size = size,
+            CFrame = orient,
+            Material = CONFIG.materials.metal,
+            Color = CONFIG.colors.chainMetal,
+            Parent = model
+        })
+    end
+    
+    return model
+end
+
+local function buildParkourPlatform(parent, name, position, forward, width, depth, material, color)
+    local minW = CONFIG.roomD.parkour.minLandingSize
+    local finalW = math.max(width, minW)
+    local finalD = math.max(depth, minW)
+    return addOrientedPart(parent, name, Vector3.new(finalW, 1, finalD), position - Vector3.new(0, 0.5, 0), forward, material, color)
+end
+
+local function buildBrokenBridge(parent, name, startPosition, endPosition, forward, bridgeWidth, intact)
+    local model = newFolder(parent, name)
+    local diff = endPosition - startPosition
+    local dist = diff.Magnitude
+    local fwd = unitXZ(diff)
+    local thick = 1.5
+    
+    if intact then
+        local pos = startPosition + diff/2 - Vector3.new(0, thick/2, 0)
+        addOrientedPart(model, "Span", Vector3.new(bridgeWidth, thick, dist), pos, fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+    else
+        local span1 = dist * 0.3
+        local span2 = dist * 0.25
+        
+        local pos1 = startPosition + fwd*(span1/2) - Vector3.new(0, thick/2, 0)
+        addOrientedPart(model, "Span1", Vector3.new(bridgeWidth, thick, span1), pos1, fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+        
+        local pos2 = endPosition - fwd*(span2/2) - Vector3.new(0, thick/2, 0)
+        addOrientedPart(model, "Span2", Vector3.new(bridgeWidth, thick, span2), pos2, fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+        
+        addRubblePile(model, "BridgeRubble", startPosition + fwd*span1 - Vector3.new(0, thick, 0), 6, bridgeWidth/2)
+        addRubblePile(model, "BridgeRubble2", endPosition - fwd*span2 - Vector3.new(0, thick, 0), 4, bridgeWidth/2)
+    end
+    
+    return model
+end
+
+local function buildSunlightShaft(parent, name, topPosition, beamWidth, beamHeight)
+    -- NOTE: this used to be a single fat, near-white, low-transparency
+    -- Neon cylinder -- which is exactly the "white cylindrical object"
+    -- bug reported in Room A. A visible light shaft needs two different
+    -- things, not one geometric primitive: (1) a small bright patch AT
+    -- the actual roof/wall opening that explains where the light enters,
+    -- and (2) a thin, heavily transparent, warm-toned haze beneath it.
+    -- The actual illumination comes from the SpotLight, not the geometry.
+    local model = newFolder(parent, name)
+    local pos = topPosition - Vector3.new(0, beamHeight/2, 0)
+    local dustColor = CONFIG.colors.skyLight:Lerp(CONFIG.colors.torch, 0.35)
+
+    local beam = newPart({
+        Name = "DustHaze",
+        Size = Vector3.new(beamWidth * 0.4, beamHeight, beamWidth * 0.4),
+        CFrame = CFrame.new(pos) * CFrame.Angles(0, 0, math.pi/2),
+        Shape = Enum.PartType.Cylinder,
+        Material = Enum.Material.Neon,
+        Color = dustColor,
+        Transparency = 0.94,
+        CanCollide = false,
+        CanQuery = false,
+        Parent = model
+    })
+
+    local opening = newPart({
+        Name = "SkyOpening",
+        Size = Vector3.new(0.15, beamWidth * 0.55, beamWidth * 0.55),
+        CFrame = CFrame.new(topPosition) * CFrame.Angles(0, 0, math.pi/2),
+        Shape = Enum.PartType.Cylinder,
+        Material = Enum.Material.Neon,
+        Color = dustColor,
+        Transparency = 0.25,
+        CanCollide = false,
+        CanQuery = false,
+        Parent = model
+    })
+
+    local light = Instance.new("SpotLight")
+    light.Color = CONFIG.colors.skyLight
+    light.Range = beamHeight * 1.5
+    light.Brightness = CONFIG.lighting.sunlightBrightness
+    light.Angle = 45
+    light.Face = Enum.NormalId.Bottom
+    light.Parent = opening
+    
+    return model
+end
+
+local function buildDragonMural(parent, name, wallPosition, forward, width, height)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local cf = orientedCFrame(wallPosition, fwd)
+    
+    local base = newPart({
+        Name = "MuralBase",
+        Size = Vector3.new(width, height, 0.4),
+        CFrame = cf * CFrame.new(0, height/2, 0.2),
+        Material = CONFIG.materials.wall,
+        Color = CONFIG.colors.ancientStone,
+        CanCollide = false,
+        Parent = model
+    })
+    
+    for i=1, 5 do
+        local rw = random:NextNumber(width*0.2, width*0.5)
+        local rh = random:NextNumber(height*0.1, height*0.3)
+        local rx = random:NextNumber(-width/2 + rw/2, width/2 - rw/2)
+        local ry = random:NextNumber(rh/2, height - rh/2)
+        local p = newPart({
+            Name = "Relief_"..i,
+            Size = Vector3.new(rw, rh, 0.6),
+            CFrame = cf * CFrame.new(rx, ry, 0.3) * CFrame.Angles(0,0,random:NextNumber(-0.5,0.5)),
+            Material = CONFIG.materials.wall,
+            Color = CONFIG.colors.ancientStone,
+            CanCollide = false,
+            Parent = model
+        })
+    end
+    
+    return model
+end
+
+----------------------------------------------------------------------
+-- VEGETATION: reusable algae/moss/vine clustering
+----------------------------------------------------------------------
+-- Scatters a small cluster of moss patches (varied size/rotation) plus
+-- an optional hanging vine around a point, so vegetation reads as
+-- naturally distributed growth instead of identical green rectangles
+-- dropped on a grid. Every room calls this rather than hand-rolling
+-- its own moss loop.
+local function buildAlgaeCluster(parent, name, position, forward, rng, densityScale)
+    rng = rng or random
+    densityScale = densityScale or 1.0
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local vconf = CONFIG.vegetation
+
+    local count = math.max(1, math.floor(rng:NextInteger(vconf.clusterMossCount[1], vconf.clusterMossCount[2]) * densityScale + 0.5))
+    for i = 1, count do
+        local jitter = right * rng:NextNumber(-2.5, 2.5) + fwd * rng:NextNumber(-2.5, 2.5)
+        local w = rng:NextNumber(vconf.mossSizeMin, vconf.mossSizeMax)
+        local d = rng:NextNumber(vconf.mossSizeMin, vconf.mossSizeMax)
+        local patchFwd = (fwd * math.cos(rng:NextNumber(0, math.pi*2)) + right * math.sin(rng:NextNumber(0, math.pi*2)))
+        buildMossPatch(model, "Moss_"..i, position + jitter + Vector3.new(0, 0.05, 0), patchFwd, w, d)
+    end
+
+    if rng:NextNumber() < vconf.clusterVineChance * densityScale then
+        buildVineStrip(model, "Vine", position + Vector3.new(0, rng:NextNumber(2, 6), 0), rng:NextNumber(3, 9))
+    end
+
+    return model
+end
+
+----------------------------------------------------------------------
+-- WALL NICHE / ALCOVE (architecture-first dressing for A / B / D)
+----------------------------------------------------------------------
+-- A genuine recessed alcove built INTO an already-flush wall face: side
+-- returns bridge the flush face back to a shadowed recessed panel, with
+-- a header lintel and sill at the wall plane. This replaces the old
+-- trick of literally widening the whole corridor to fake a "recess" --
+-- that read as the hallway randomly getting wider, not as a carved
+-- niche. `outwardForward` must point FROM the wall face INTO the room.
+local function buildWallNiche(parent, name, wallFacePosition, outwardForward, width, height, material, color, hasStatue, rng)
+    rng = rng or random
+    local model = newFolder(parent, name)
+    local outFwd = unitXZ(outwardForward)
+    local intoWall = -outFwd
+    local right = getRight(outFwd)
+    local depth = 1.3
+
+    -- Recessed back panel, set back into the wall -- darker so it reads as shadowed
+    local backPos = wallFacePosition + intoWall * depth + Vector3.new(0, height/2, 0)
+    addOrientedPart(model, "RecessBack", Vector3.new(width, height, 0.4), backPos, outFwd, material, CONFIG.colors.wallDark)
+
+    -- Side returns connecting the flush face to the recessed back
+    local retPos1 = wallFacePosition + intoWall * (depth/2) + right * (width/2) + Vector3.new(0, height/2, 0)
+    local retPos2 = wallFacePosition + intoWall * (depth/2) - right * (width/2) + Vector3.new(0, height/2, 0)
+    addOrientedPart(model, "ReturnA", Vector3.new(0.4, height, depth), retPos1, right, material, color)
+    addOrientedPart(model, "ReturnB", Vector3.new(0.4, height, depth), retPos2, right, material, color)
+
+    -- Header lintel at the wall face plane, plus a sill at the base
+    local headerPos = wallFacePosition + Vector3.new(0, height + 0.4, 0)
+    addOrientedPart(model, "Header", Vector3.new(width + 1.4, 0.8, 1.2), headerPos, outFwd, material, color)
+    addOrientedPart(model, "Sill", Vector3.new(width + 0.6, 0.5, 1.0), wallFacePosition + Vector3.new(0, 0.25, 0), outFwd, material, color)
+
+    if hasStatue then
+        local plinthPos = wallFacePosition + intoWall * (depth * 0.6) + Vector3.new(0, 0.9, 0)
+        addOrientedPart(model, "Plinth", Vector3.new(width * 0.6, 1.8, width * 0.6), plinthPos, outFwd, material, CONFIG.colors.ancientStone)
+        buildStatue(model, "NicheStatue", plinthPos + Vector3.new(0, 0.9, 0), outFwd, height * 0.72, "guarding")
+    else
+        -- An empty niche still needs a reason to exist: a votive torch
+        local torchPos = wallFacePosition + intoWall * (depth * 0.5)
+        addWallTorch(model, "NicheTorch", torchPos, outFwd, height * 0.55)
+    end
+
+    -- Vines originate from the header/ledge, per the brief -- never
+    -- floating in open space
+    if rng:NextNumber() > 0.4 then
+        buildVineStrip(model, "NicheVine", headerPos + Vector3.new(0, 0.4, 0) + outFwd * 0.3, rng:NextNumber(3, 6))
+    end
+    if rng:NextNumber() > 0.5 then
+        buildMossPatch(model, "NicheMoss", wallFacePosition + Vector3.new(0, 0.3, 0) + outFwd * 0.2, outFwd, width * 0.7, 1.5)
+    end
+
+    return model
+end
+
+----------------------------------------------------------------------
+-- FALLEN WARRIOR SET PIECES (Room D environmental storytelling)
+----------------------------------------------------------------------
+-- Every call produces a genuinely different situation: a broken statue
+-- in a distinct pose, plus a dropped weapon and/or shield lying nearby,
+-- occasionally bone fragments. This directly answers the brief's
+-- complaint that Room D previously had "one random block called
+-- FallenWarrior" -- these are proper set-pieces with variation.
+local FALLEN_WARRIOR_VARIANTS = {"reaching", "collapsed", "kneeling", "climbing", "guarding"}
+
+local function buildFallenSword(parent, name, position, forward, tilt)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local cf = CFrame.new(position) * CFrame.Angles(0, tilt or 0, math.rad(90))
+    newPart({Name="Blade", Size=Vector3.new(0.35, 3.6, 0.05), CFrame=cf * CFrame.new(0, 1.8, 0), Material=CONFIG.materials.spikeSteel, Color=CONFIG.colors.spikeSteel, Parent=model})
+    newPart({Name="Hilt", Size=Vector3.new(0.5, 0.9, 0.5), CFrame=cf * CFrame.new(0, -0.1, 0), Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=model})
+    newPart({Name="Crossguard", Size=Vector3.new(1.2, 0.25, 0.25), CFrame=cf * CFrame.new(0, 0.5, 0), Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=model})
+    return model
+end
+
+local function buildFallenShield(parent, name, position, forward, leaning)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local pitch = leaning and math.rad(20) or math.rad(90)
+    local cf = orientedCFrame(position, fwd) * CFrame.Angles(pitch, 0, 0)
+    newPart({Name="ShieldFace", Size=Vector3.new(1.8, 2.2, 0.25), CFrame=cf * CFrame.new(0, 1.1, 0), Shape=Enum.PartType.Cylinder, Material=CONFIG.materials.metal, Color=CONFIG.colors.chainMetal, Parent=model})
+    newPart({Name="ShieldBoss", Size=Vector3.new(0.6, 0.6, 0.4), CFrame=cf * CFrame.new(0, 1.1, 0.15), Shape=Enum.PartType.Ball, Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=model})
+    return model
+end
+
+local function buildFallenWarrior(parent, name, position, forward, variant, rng)
+    rng = rng or random
+    variant = variant or FALLEN_WARRIOR_VARIANTS[rng:NextInteger(1, #FALLEN_WARRIOR_VARIANTS)]
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local model = newFolder(parent, name)
+
+    local warriorHeight = rng:NextNumber(6.5, 8.5)
+    buildStatue(model, "Warrior", position, fwd, warriorHeight, variant)
+
+    -- Weathering: every fallen warrior gets some moss, tying it into the ruin
+    buildAlgaeCluster(model, "Growth", position, fwd, rng, 0.6)
+
+    -- Dropped equipment, varied per situation
+    if variant == "collapsed" or variant == "kneeling" then
+        buildFallenSword(model, "DroppedSword", position + right * rng:NextNumber(1.5, 2.5) + fwd * rng:NextNumber(-1, 1), fwd, rng:NextNumber(0, math.pi*2))
+        if rng:NextNumber() > 0.5 then
+            buildFallenShield(model, "DroppedShield", position - right * 2, fwd, false)
+        end
+    elseif variant == "reaching" or variant == "climbing" then
+        -- weapon still slung/dropped just below the reach
+        buildFallenSword(model, "DroppedSword", position - right * 1.8, fwd, math.pi/2)
+    else -- guarding
+        buildFallenShield(model, "PropShield", position + right * 1.6, fwd, true)
+        buildFallenSword(model, "PlantedSword", position - right * 1.6, fwd, 0)
+    end
+
+    return model
+end
+
+----------------------------------------------------------------------
+-- SHATTERED STAIRCASE (Room D, Section 1)
+----------------------------------------------------------------------
+-- Climbs from basePosition to topPosition along `forward`, with a
+-- deliberately incomplete step run (missing steps are gaps the player
+-- must small-jump, never gaps wide enough to strand them) and mossy,
+-- chain-braced side supports.
+local function buildShatteredStaircase(parent, name, basePosition, topPosition, forward, width, rng)
+    rng = rng or random
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local diff = topPosition - basePosition
+    local totalHeight = diff.Y
+    local totalRun = Vector3.new(diff.X, 0, diff.Z).Magnitude
+    local runDir = totalRun > 0.01 and unitXZ(diff) or fwd
+
+    local stepCount = math.max(8, math.floor(totalHeight / 1.3))
+    local stepHeight = totalHeight / stepCount
+    local stepDepth = totalRun / stepCount
+
+    for i = 1, stepCount do
+        -- Never remove more than one step in a row, and never the first
+        -- or last two steps, so entry/landing is always solid.
+        local missing = (i > 3 and i < stepCount - 2) and (rng:NextNumber() > 0.82)
+        local stepPos = basePosition + runDir * (stepDepth * (i - 0.5)) + Vector3.new(0, stepHeight * i - stepHeight/2, 0)
+        if not missing then
+            addOrientedPart(model, "Step_"..i, Vector3.new(width, stepHeight + 0.4, stepDepth + 0.5), stepPos, runDir, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+            if rng:NextNumber() > 0.7 then
+                buildMossPatch(model, "StepMoss_"..i, stepPos + Vector3.new(0, stepHeight/2 + 0.1, 0), runDir, width * 0.5, stepDepth * 0.6)
+            end
+        else
+            -- A broken stub instead of a full step -- reads as damage, not a random void
+            addOrientedPart(model, "StepStub_"..i, Vector3.new(width * 0.4, stepHeight + 0.4, stepDepth * 0.5), stepPos - right * width * 0.25, runDir, CONFIG.materials.floor, CONFIG.colors.wallDark)
+        end
+    end
+
+    -- Broken side railing with chain bracing every few steps
+    for i = 4, stepCount - 2, 4 do
+        local stepPos = basePosition + runDir * (stepDepth * (i - 0.5)) + Vector3.new(0, stepHeight * i, 0)
+        if rng:NextNumber() > 0.4 then
+            buildChainSegment(model, "RailChain_"..i, stepPos + right * (width/2) + Vector3.new(0, 4, 0), stepPos + right * (width/2), 3)
+        end
+    end
+
+    addRubblePile(model, "BaseRubble", basePosition + right * (width/2 + 2), 5, 2.5)
+
+    return model, topPosition
+end
+
+----------------------------------------------------------------------
+-- WALL-MOUNTED RUINED LEDGE (Room D, Section 2 / general ascent use)
+----------------------------------------------------------------------
+-- A platform that visibly belongs to the architecture: it sits on a
+-- broken support corbel/stub pillar rather than floating, which is
+-- the difference between "ruined balcony" and "random floating block".
+local function buildWallLedgePlatform(parent, name, position, forward, width, depth, tilted, rng)
+    rng = rng or random
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+
+    local plat = addOrientedPart(model, "Ledge", Vector3.new(width, 1.4, depth), position, fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+    if tilted then
+        plat.CFrame = plat.CFrame * CFrame.Angles(math.rad(rng:NextNumber(-6, 6)), 0, math.rad(rng:NextNumber(-8, 8)))
+    end
+
+    -- Support corbel/stub running down to (approximately) the structure below
+    buildStonePillar(model, "SupportCorbel", position - Vector3.new(0, 10, 0), 10, 1.6, CONFIG.materials.wall, CONFIG.colors.ancientStone, true)
+
+    if rng:NextNumber() > 0.5 then
+        buildAlgaeCluster(model, "Growth", position + Vector3.new(0, 0.7, 0), fwd, rng, 1.0)
+    end
+    if rng:NextNumber() > 0.6 then
+        addRubblePile(model, "Debris", position + Vector3.new(0, 0.9, 0), 4, depth * 0.3)
+    end
+
+    return model
+end
+
+----------------------------------------------------------------------
+-- EXTERNAL MODEL HOOK (e.g. the pre-built Room B golem)
+----------------------------------------------------------------------
+-- Some encounter pieces (the golem chief among them) are already
+-- authored as real 3D models rather than generator geometry. This
+-- helper places the spawn marker the encounter script needs and, if a
+-- matching model already exists in the configured storage service,
+-- clones it into place -- but never fails generation if it's absent,
+-- since the generator must remain safely rerunnable on its own.
+local function spawnExternalModel(parentFolder, storageServiceName, modelName, cframe)
+    local ok, storage = pcall(function() return game:GetService(storageServiceName) end)
+    if not ok or not storage then return nil end
+
+    local ok2, template = pcall(function() return storage:FindFirstChild(modelName) end)
+    if not ok2 or not template then
+        print(string.format("  (note) '%s' not found in %s -- leaving spawn marker only, no placeholder geometry built.", modelName, storageServiceName))
+        return nil
+    end
+
+    local ok3, clone = pcall(function() return template:Clone() end)
+    if not ok3 or not clone then return nil end
+
+    clone.Parent = parentFolder
+    if clone:IsA("Model") and clone.PrimaryPart then
+        clone:SetPrimaryPartCFrame(cframe)
+    elseif clone:IsA("BasePart") then
+        clone.CFrame = cframe
+    end
+    return clone
+end
+
+----------------------------------------------------------------------
+-- BANNER (gate dressing)
+----------------------------------------------------------------------
+local function buildBanner(parent, name, topPosition, forward, height, width)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    width = width or 3
+    height = height or 8
+    local cf = orientedCFrame(topPosition, fwd)
+    newPart({Name="Rod", Size=Vector3.new(width + 0.6, 0.25, 0.25), CFrame = cf, Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = model})
+    newPart({Name="Cloth", Size=Vector3.new(width, height, 0.15), CFrame = cf * CFrame.new(0, -height/2, 0), Material = Enum.Material.Fabric, Color = CONFIG.colors.banner, CanCollide = false, Parent = model})
+    newPart({Name="Emblem", Size=Vector3.new(width * 0.4, width * 0.4, 0.05), CFrame = cf * CFrame.new(0, -height * 0.32, 0.11), Material = Enum.Material.Neon, Color = CONFIG.colors.bannerTrim, CanCollide = false, Transparency = 0.15, Parent = model})
+    return model
+end
+
+local function buildDoorFrame(parent, name, floorPosition, forward, width, height, material, color)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    
+    local thick = 2
+    local pPos1 = floorPosition - right * (width/2 + thick/2) + Vector3.new(0, height/2, 0)
+    local pPos2 = floorPosition + right * (width/2 + thick/2) + Vector3.new(0, height/2, 0)
+    
+    addOrientedPart(model, "Jamb1", Vector3.new(thick, height, thick), pPos1, fwd, material, color)
+    addOrientedPart(model, "Jamb2", Vector3.new(thick, height, thick), pPos2, fwd, material, color)
+    
+    local lintelPos = floorPosition + Vector3.new(0, height + thick/2, 0)
+    addOrientedPart(model, "Lintel", Vector3.new(width + thick*2, thick, thick), lintelPos, fwd, material, color)
+    
+    return model
+end
+
+local function buildBarredGate(parent, name, floorPosition, forward, width, height)
+    local model = buildDoorFrame(parent, name, floorPosition, forward, width, height, CONFIG.materials.metal, CONFIG.colors.metal)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    
+    local bars = 5
+    for i=1, bars do
+        local frac = i/(bars+1)
+        local bx = -width/2 + width*frac
+        local bPos = floorPosition + right * bx + Vector3.new(0, height/2, 0)
+        addOrientedPart(model, "Bar_"..i, Vector3.new(0.4, height, 0.4), bPos, fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    end
+    
+    local crossPos = floorPosition + Vector3.new(0, height*0.6, 0)
+    addOrientedPart(model, "Crossbar", Vector3.new(width, 0.6, 0.6), crossPos, fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    
+    return model
+end
+
+local function buildSpikeTrap(parent, name, floorPosition, forward)
+    -- Ported from the Room A reference draft: full mechanical detail --
+    -- stone housing rings, carved corner stones, a geared medallion,
+    -- guide rails, coiled springs, and genuinely tapering segmented
+    -- spikes (stacked shrinking cylinders = a real point), instead of
+    -- the earlier flat wedge-pair spikes. A transparent RootPart is the
+    -- Model's PrimaryPart so buildCeilingSpike/buildWallSpike can
+    -- rotate the whole assembly in place via PivotTo.
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local t = CONFIG.spikeTrap
+    local trap = Instance.new("Model")
+    trap.Name = name
+    trap.Parent = parent
+
+    local rootPart = newPart({
+        Name = "RootPart", Size = Vector3.new(1, 1, 1),
+        CFrame = orientedCFrame(floorPosition, fwd),
+        Transparency = 1, CanCollide = false, CanQuery = false,
+        Parent = trap,
+    })
+    trap.PrimaryPart = rootPart
+
+    ------------------------------------------------------------
+    -- Stone housing
+    ------------------------------------------------------------
+    local lowOuterWidth = t.width + t.housingMargin * 2
+    local lowOuterDepth = t.depth + t.housingMargin * 2
+    local capOuterWidth = t.width + t.housingMargin
+    local capOuterDepth = t.depth + t.housingMargin
+
+    local function buildHousingRing(ringName, outerWidth, outerDepth, ringThickness, yCenter, ringHeight, material, color)
+        addOrientedPart(trap, ringName.."_Front", Vector3.new(outerWidth, ringHeight, ringThickness),
+            floorPosition + fwd * (outerDepth/2 - ringThickness/2) + Vector3.new(0, yCenter, 0), fwd, material, color)
+        addOrientedPart(trap, ringName.."_Back", Vector3.new(outerWidth, ringHeight, ringThickness),
+            floorPosition - fwd * (outerDepth/2 - ringThickness/2) + Vector3.new(0, yCenter, 0), fwd, material, color)
+        addOrientedPart(trap, ringName.."_Left", Vector3.new(ringThickness, ringHeight, outerDepth - ringThickness*2),
+            floorPosition - right * (outerWidth/2 - ringThickness/2) + Vector3.new(0, yCenter, 0), fwd, material, color)
+        addOrientedPart(trap, ringName.."_Right", Vector3.new(ringThickness, ringHeight, outerDepth - ringThickness*2),
+            floorPosition + right * (outerWidth/2 - ringThickness/2) + Vector3.new(0, yCenter, 0), fwd, material, color)
+    end
+
+    buildHousingRing("HousingLow", lowOuterWidth, lowOuterDepth, t.housingMargin*0.85,
+        t.housingLowHeight/2, t.housingLowHeight, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+    buildHousingRing("HousingCap", capOuterWidth, capOuterDepth, t.housingMargin*0.6,
+        t.housingLowHeight + t.housingCapHeight/2, t.housingCapHeight, CONFIG.materials.wall, CONFIG.colors.wall)
+
+    local housingCorners = {
+        floorPosition - right*(lowOuterWidth/2 - 0.9) - fwd*(lowOuterDepth/2 - 0.9),
+        floorPosition + right*(lowOuterWidth/2 - 0.9) - fwd*(lowOuterDepth/2 - 0.9),
+        floorPosition - right*(lowOuterWidth/2 - 0.9) + fwd*(lowOuterDepth/2 - 0.9),
+        floorPosition + right*(lowOuterWidth/2 - 0.9) + fwd*(lowOuterDepth/2 - 0.9),
+    }
+    for index, cornerPos in ipairs(housingCorners) do
+        newPart({
+            Name = "HousingCornerStone_"..index,
+            Size = Vector3.new(1.8, t.housingLowHeight + t.housingCapHeight + 0.3, 1.8),
+            CFrame = CFrame.new(cornerPos + Vector3.new(0, (t.housingLowHeight + t.housingCapHeight)/2, 0)),
+            Material = CONFIG.materials.wall, Color = CONFIG.colors.ancientStone, Parent = trap,
+        })
+    end
+
+    local gearCenter = floorPosition + fwd*(lowOuterDepth/2 - t.housingMargin*0.425) + Vector3.new(0, t.housingLowHeight*0.55, 0)
+    local gearAxis = horizontalAxisCFrame(gearCenter, fwd)
+    newPart({Name="GearMedallion_Hub", Shape=Enum.PartType.Cylinder, Size=Vector3.new(0.3, 1.4, 1.4),
+        CFrame=gearAxis, Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+    for toothIndex = 0, 9 do
+        local toothAngle = math.rad(toothIndex * 36)
+        newPart({Name="GearMedallion_Tooth"..toothIndex, Size=Vector3.new(0.32, 0.4, 0.4),
+            CFrame=gearAxis * CFrame.Angles(toothAngle, 0, 0) * CFrame.new(0, 0.85, 0),
+            Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+    end
+
+    ------------------------------------------------------------
+    -- Mechanism
+    ------------------------------------------------------------
+    newPart({Name="PitFloor", Size=Vector3.new(t.width, 0.4, t.depth),
+        CFrame=orientedCFrame(floorPosition + Vector3.new(0, -t.pitDepth - 0.2, 0), fwd),
+        Material=CONFIG.materials.spikeSteel, Color=CONFIG.colors.spikeSteel, Parent=trap})
+
+    addOrientedPart(trap, "FrameFront", Vector3.new(t.width + t.frameThickness*2, 0.3, t.frameThickness),
+        floorPosition + fwd*(t.depth/2 + t.frameThickness/2) + Vector3.new(0, 0.15, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    addOrientedPart(trap, "FrameBack", Vector3.new(t.width + t.frameThickness*2, 0.3, t.frameThickness),
+        floorPosition - fwd*(t.depth/2 + t.frameThickness/2) + Vector3.new(0, 0.15, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    addOrientedPart(trap, "FrameLeft", Vector3.new(t.frameThickness, 0.3, t.depth),
+        floorPosition - right*(t.width/2 + t.frameThickness/2) + Vector3.new(0, 0.15, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    addOrientedPart(trap, "FrameRight", Vector3.new(t.frameThickness, 0.3, t.depth),
+        floorPosition + right*(t.width/2 + t.frameThickness/2) + Vector3.new(0, 0.15, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+
+    local frameCorners = {
+        floorPosition - right*(t.width/2 + t.frameThickness/2) - fwd*(t.depth/2 + t.frameThickness/2),
+        floorPosition + right*(t.width/2 + t.frameThickness/2) - fwd*(t.depth/2 + t.frameThickness/2),
+        floorPosition - right*(t.width/2 + t.frameThickness/2) + fwd*(t.depth/2 + t.frameThickness/2),
+        floorPosition + right*(t.width/2 + t.frameThickness/2) + fwd*(t.depth/2 + t.frameThickness/2),
+    }
+    for index, cornerPos in ipairs(frameCorners) do
+        newPart({Name="FrameBracket_"..index, Size=Vector3.new(0.75, 0.55, 0.75),
+            CFrame=CFrame.new(cornerPos + Vector3.new(0, 0.3, 0)),
+            Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+        for boltIndex = 1, 2 do
+            local boltRight = boltIndex == 1 and 0.22 or -0.22
+            local boltForward = boltIndex == 1 and -0.22 or 0.22
+            newPart({Name="FrameBolt_"..index.."_"..boltIndex, Shape=Enum.PartType.Cylinder, Size=Vector3.new(0.22, 0.24, 0.24),
+                CFrame=CFrame.new(cornerPos + right*boltRight + fwd*boltForward + Vector3.new(0, 0.62, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+                Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+        end
+    end
+
+    local railHeight = t.pitDepth + t.extendOffsetY + 0.6
+    local railInset = 0.55
+    local railCorners = {
+        floorPosition - right*(t.width/2 - railInset) - fwd*(t.depth/2 - railInset),
+        floorPosition + right*(t.width/2 - railInset) - fwd*(t.depth/2 - railInset),
+        floorPosition - right*(t.width/2 - railInset) + fwd*(t.depth/2 - railInset),
+        floorPosition + right*(t.width/2 - railInset) + fwd*(t.depth/2 - railInset),
+    }
+    for index, cornerPos in ipairs(railCorners) do
+        newPart({Name="GuideRail_"..index, Shape=Enum.PartType.Cylinder, Size=Vector3.new(railHeight, 0.22, 0.22),
+            CFrame=CFrame.new(cornerPos + Vector3.new(0, railHeight/2 - t.pitDepth, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+            Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+    end
+
+    local springInset = railInset + 0.85
+    local springCorners = {
+        floorPosition - right*(t.width/2 - springInset) - fwd*(t.depth/2 - springInset),
+        floorPosition + right*(t.width/2 - springInset) - fwd*(t.depth/2 - springInset),
+        floorPosition - right*(t.width/2 - springInset) + fwd*(t.depth/2 - springInset),
+        floorPosition + right*(t.width/2 - springInset) + fwd*(t.depth/2 - springInset),
+    }
+    for cornerIndex, cornerPos in ipairs(springCorners) do
+        for coil = 1, t.springCoils do
+            local coilY = -t.pitDepth + 0.3 + (coil-1)*0.34
+            newPart({Name="Spring_"..cornerIndex.."_Coil"..coil, Shape=Enum.PartType.Cylinder, Size=Vector3.new(0.16, 0.85, 0.85),
+                CFrame=CFrame.new(cornerPos + Vector3.new(0, coilY, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+                Material=CONFIG.materials.metal, Color=CONFIG.colors.spring, Parent=trap})
+        end
+    end
+
+    local supportY = -t.pitDepth - 0.05
+    local diagLength = math.sqrt(t.width^2 + t.depth^2) * 0.88
+    addOrientedPart(trap, "SupportBrace1", Vector3.new(diagLength, 0.3, 0.5), floorPosition + Vector3.new(0, supportY, 0), unitXZ(right + fwd), CONFIG.materials.metal, CONFIG.colors.metal)
+    addOrientedPart(trap, "SupportBrace2", Vector3.new(diagLength, 0.3, 0.5), floorPosition + Vector3.new(0, supportY, 0), unitXZ(right - fwd), CONFIG.materials.metal, CONFIG.colors.metal)
+
+    local plankSpan = (t.depth - t.plankGap*(t.plankCount-1)) / t.plankCount
+    local plankOffsets = {}
+    for plankIndex = 0, t.plankCount - 1 do
+        local plankOffset = -t.depth/2 + plankSpan/2 + plankIndex*(plankSpan + t.plankGap)
+        plankOffsets[plankIndex+1] = plankOffset
+        addOrientedPart(trap, "Plank_"..(plankIndex+1), Vector3.new(t.width, 0.5, plankSpan), floorPosition + fwd*plankOffset, fwd, CONFIG.materials.wood, CONFIG.colors.wood)
+    end
+
+    ------------------------------------------------------------
+    -- Moving spike bed -- tapering segmented spikes (stacked shrinking
+    -- cylinders) instead of flat wedges: a genuinely pointed silhouette.
+    ------------------------------------------------------------
+    local spikeBed = Instance.new("Model")
+    spikeBed.Name = "SpikeBed"
+    spikeBed.Parent = trap
+
+    local bedPlate = newPart({
+        Name = "BedPlate", Size = Vector3.new(t.width - 1, 0.3, t.depth - 1),
+        CFrame = orientedCFrame(floorPosition + Vector3.new(0, t.restOffsetY, 0), fwd),
+        Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.spikeSteel, Parent = spikeBed,
+    })
+    spikeBed.PrimaryPart = bedPlate
+
+    local colSpacing = t.width / (t.spikeCols + 1)
+    for col = 1, t.spikeCols do
+        local localRight = -t.width/2 + colSpacing*col
+        for row = 1, #plankOffsets - 1 do
+            local localForward = (plankOffsets[row] + plankOffsets[row+1]) / 2
+            local spikeBase = floorPosition + right*localRight + fwd*localForward + Vector3.new(0, t.restOffsetY + 0.15, 0)
+            local segHeight = t.spikeHeight / t.spikeSegments
+            for seg = 1, t.spikeSegments do
+                local segRadius = t.spikeBaseRadius * (1 - (seg-1)/t.spikeSegments)
+                local nextRadius = t.spikeBaseRadius * (1 - seg/t.spikeSegments)
+                local segRadiusAvg = math.max((segRadius + nextRadius)/2, 0.03)
+                newPart({
+                    Name = string.format("Spike_%d_%d_Seg%d", col, row, seg),
+                    Shape = Enum.PartType.Cylinder,
+                    Size = Vector3.new(segHeight + 0.06, segRadiusAvg*2, segRadiusAvg*2),
+                    CFrame = CFrame.new(spikeBase + Vector3.new(0, segHeight*(seg-0.5), 0)) * CFrame.Angles(0, 0, math.rad(90)),
+                    Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.spikeSteel, Parent = spikeBed,
+                })
+            end
+        end
+    end
+
+    trap:SetAttribute("Kind", "SpikeTrap")
+    trap:SetAttribute("CycleSeconds", t.cycleSeconds)
+    trap:SetAttribute("Damage", t.damage)
+    trap:SetAttribute("RestOffsetY", t.restOffsetY)
+    trap:SetAttribute("ExtendOffsetY", t.extendOffsetY)
+    CollectionService:AddTag(trap, "SpikeTrap")
+
+    return trap
+end
+
+----------------------------------------------------------------------
+-- CEILING / WALL SPIKE VARIANTS
+----------------------------------------------------------------------
+-- Same trap, rotated in place around its own RootPart pivot -- 180 deg
+-- for a ceiling-mounted trap (spikes hang down), +/-90 deg for a wall-
+-- mounted trap (spikes point sideways into the corridor).
+local function buildCeilingSpike(parent, name, centerPosition, forward)
+    local trap = buildSpikeTrap(parent, name, centerPosition, forward)
+    trap:PivotTo(trap:GetPivot() * CFrame.Angles(0, 0, math.pi))
+    return trap
+end
+
+local function buildWallSpike(parent, name, centerPosition, forward, isRightWall)
+    local trap = buildSpikeTrap(parent, name, centerPosition, forward)
+    local angle = isRightWall and (math.pi/2) or (-math.pi/2)
+    trap:PivotTo(trap:GetPivot() * CFrame.Angles(0, 0, angle))
+    return trap
+end
+
+local function buildSwingingBlade(parent, name, pivotPosition, forward)
+    -- Ported from the Room A reference draft: separate ceiling support
+    -- posts + mount plates, a visible chain link run down to the pivot,
+    -- a ball pivot hub, and a counterweight arm opposite the blade --
+    -- reads as a real mechanical assembly, not a disc on a stick.
+    local b = CONFIG.swingingBlade
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local blade = Instance.new("Model")
+    blade.Name = name
+    blade.Parent = parent
+
+    local postForwardOffset = b.axleLength / 2
+    for _, side in ipairs({-1, 1}) do
+        local postTop = pivotPosition + fwd * (postForwardOffset * side) + Vector3.new(0, b.mountDrop, 0)
+        local postBottom = pivotPosition + fwd * (postForwardOffset * side)
+        newPart({
+            Name = "SupportPost_" .. (side > 0 and "Front" or "Back"),
+            Size = Vector3.new(0.55, b.mountDrop, 0.55),
+            CFrame = CFrame.new((postTop + postBottom) / 2),
+            Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = blade,
+        })
+        newPart({
+            Name = "MountPlate_" .. (side > 0 and "Front" or "Back"),
+            Size = Vector3.new(1.1, 0.3, 1.1),
+            CFrame = CFrame.new(postTop + Vector3.new(0, -0.1, 0)),
+            Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = blade,
+        })
+    end
+
+    newPart({
+        Name = "Axle", Shape = Enum.PartType.Cylinder, Size = Vector3.new(b.axleLength + 0.6, 0.3, 0.3),
+        CFrame = horizontalAxisCFrame(pivotPosition, fwd),
+        Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = blade,
+    })
+
+    for linkIndex = 1, b.chainLinks do
+        local linkY = pivotPosition.Y + 0.5 + (linkIndex - 1) * 0.55
+        newPart({
+            Name = "ChainLink_" .. linkIndex,
+            Size = linkIndex % 2 == 0 and Vector3.new(0.55, 0.5, 0.22) or Vector3.new(0.22, 0.5, 0.55),
+            CFrame = CFrame.new(pivotPosition.X, linkY, pivotPosition.Z),
+            Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = blade,
+        })
+    end
+
+    local pivot = Instance.new("Model")
+    pivot.Name = "Pivot"
+    pivot.Parent = blade
+
+    local pivotHub = newPart({
+        Name = "PivotHub", Shape = Enum.PartType.Ball, Size = Vector3.new(1.1, 1.1, 1.1),
+        CFrame = CFrame.new(pivotPosition), Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = pivot,
+    })
+    pivot.PrimaryPart = pivotHub
+
+    local bladeCenter = pivotPosition - Vector3.new(0, b.armLength, 0)
+    newPart({
+        Name = "Arm", Size = Vector3.new(0.4, b.armLength, 0.4),
+        CFrame = CFrame.new((pivotPosition + bladeCenter) / 2),
+        Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = pivot,
+    })
+
+    local bladeAxis = horizontalAxisCFrame(bladeCenter, fwd)
+    newPart({
+        Name = "BladeHub", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.65, 1.7, 1.7),
+        CFrame = bladeAxis, Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = pivot,
+    })
+    newPart({
+        Name = "BladeDisc", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.35, b.bladeRadius*2, b.bladeRadius*2),
+        CFrame = bladeAxis, Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.spikeSteel, Parent = pivot,
+    })
+    for toothIndex = 0, 15 do
+        local toothAngle = math.rad(toothIndex * 22.5)
+        newPart({
+            Name = "BladeTooth_" .. toothIndex, Size = Vector3.new(0.3, 0.5, 0.42),
+            CFrame = bladeAxis * CFrame.Angles(toothAngle, 0, 0) * CFrame.new(0, b.bladeRadius - 0.1, 0),
+            Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.spikeSteel, Parent = pivot,
+        })
+    end
+
+    local counterCenter = pivotPosition + Vector3.new(0, b.counterArmLength, 0)
+    newPart({
+        Name = "CounterArm", Size = Vector3.new(0.32, b.counterArmLength, 0.32),
+        CFrame = CFrame.new((pivotPosition + counterCenter) / 2),
+        Material = CONFIG.materials.metal, Color = CONFIG.colors.metal, Parent = pivot,
+    })
+    newPart({
+        Name = "Counterweight", Shape = Enum.PartType.Ball,
+        Size = Vector3.new(b.counterweightRadius*2, b.counterweightRadius*2, b.counterweightRadius*2),
+        CFrame = CFrame.new(counterCenter), Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.counterweight, Parent = pivot,
+    })
+
+    blade:SetAttribute("Kind", "SwingingBlade")
+    blade:SetAttribute("SwingAxis", fwd)
+    blade:SetAttribute("SwingDegrees", b.swingDegrees)
+    blade:SetAttribute("PeriodSeconds", b.periodSeconds)
+    blade:SetAttribute("Damage", b.damage)
+    CollectionService:AddTag(blade, "SwingingBlade")
+
+    return blade
+end
+
+local function buildPortcullisDoor(parent, name, floorPosition, forward, doorWidth, roomHeight)
+    -- Ported from the Room A reference draft: real jambs + metal tracks,
+    -- a heavy lintel, counterweight housings with visible weights, and a
+    -- leaf built from tapering spiked vertical bars + horizontal
+    -- crossbars, hanging open near the ceiling by default.
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local d = CONFIG.portcullis
+    local assembly = newFolder(parent, name)
+    local trackInset = doorWidth / 2 + 0.5
+    local trackHeight = roomHeight - 0.5
+
+    for _, side in ipairs({-1, 1}) do
+        local sideName = side < 0 and "Left" or "Right"
+        addOrientedPart(assembly, "Jamb"..sideName, Vector3.new(1.6, trackHeight, 2.2),
+            floorPosition + right * (trackInset * side) + Vector3.new(0, trackHeight/2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+        addOrientedPart(assembly, "Track"..sideName, Vector3.new(0.4, trackHeight, 0.6),
+            floorPosition + right * ((trackInset - 0.9) * side) + Vector3.new(0, trackHeight/2, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    end
+
+    addOrientedPart(assembly, "Lintel", Vector3.new(doorWidth + 3.6, 2.2, 2.6),
+        floorPosition + Vector3.new(0, roomHeight - 1.1, 0), fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+    for _, side in ipairs({-1, 1}) do
+        local sideName = side < 0 and "Left" or "Right"
+        local housingCenter = floorPosition + right * (trackInset * side) + Vector3.new(0, roomHeight - 2.0, 0)
+        addOrientedPart(assembly, "CounterHousing"..sideName, Vector3.new(1.9, 2.6, 2.4), housingCenter, fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+        newPart({
+            Name = "CounterWeight"..sideName, Size = Vector3.new(1.0, 1.0, 1.0),
+            CFrame = CFrame.new(housingCenter + Vector3.new(0, -0.4, 0)),
+            Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.counterweight, Parent = assembly,
+        })
+    end
+
+    local leaf = Instance.new("Model")
+    leaf.Name = "Leaf"
+    leaf.Parent = assembly
+
+    local leafHeight = roomHeight * d.leafHeightRatio
+    local leafWidth = doorWidth - 0.6
+    local openCenterY = roomHeight - leafHeight/2 - 0.4
+    local closedCenterY = leafHeight/2 + 0.1
+    local leafCenter = floorPosition + Vector3.new(0, openCenterY, 0)
+
+    local barSpacing = leafWidth / (d.verticalBars + 1)
+    local primaryBar = nil
+    for barIndex = 1, d.verticalBars do
+        local barRight = -leafWidth/2 + barSpacing * barIndex
+        local bar = addOrientedPart(leaf, "VerticalBar_"..barIndex, Vector3.new(0.4, leafHeight - 0.8, 0.4),
+            leafCenter + right * barRight + Vector3.new(0, -0.4, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+        primaryBar = primaryBar or bar
+
+        local segHeight = 0.9 / 3
+        for seg = 1, 3 do
+            local segRadiusAvg = math.max(0.24 * (1 - (seg-1)/3), 0.03)
+            newPart({
+                Name = string.format("BarSpike_%d_%d", barIndex, seg),
+                Shape = Enum.PartType.Cylinder, Size = Vector3.new(segHeight + 0.05, segRadiusAvg*2, segRadiusAvg*2),
+                CFrame = CFrame.new(leafCenter + right * barRight + Vector3.new(0, -leafHeight/2 + segHeight*(seg-0.5), 0)) * CFrame.Angles(0, 0, math.rad(90)),
+                Material = CONFIG.materials.spikeSteel, Color = CONFIG.colors.spikeSteel, Parent = leaf,
+            })
+        end
+    end
+
+    for crossIndex = 1, d.horizontalBars do
+        local crossY = -leafHeight/2 + (leafHeight / (d.horizontalBars + 1)) * crossIndex
+        addOrientedPart(leaf, "CrossBar_"..crossIndex, Vector3.new(leafWidth, 0.35, 0.35),
+            leafCenter + Vector3.new(0, crossY, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+    end
+
+    leaf.PrimaryPart = primaryBar
+
+    assembly:SetAttribute("Kind", "SealingDoor")
+    assembly:SetAttribute("OpenOffsetY", openCenterY)
+    assembly:SetAttribute("ClosedOffsetY", closedCenterY)
+    assembly:SetAttribute("TriggerType", "CrossDistance")
+    CollectionService:AddTag(assembly, "SealingDoor")
+
+    return assembly
+end
+
+local function addCollapsedMasonry(parent, name, centerPosition, chunkCount, spreadRadius)
+    local model = newFolder(parent, name)
+    for i=1, chunkCount do
+        local size = Vector3.new(random:NextNumber(2, 4), random:NextNumber(1, 2.5), random:NextNumber(2, 4))
+        local rx = random:NextNumber(-spreadRadius, spreadRadius)
+        local rz = random:NextNumber(-spreadRadius, spreadRadius)
+        local pos = centerPosition + Vector3.new(rx, size.Y/2, rz)
+        newPart({
+            Name = "Block_"..i,
+            Size = size,
+            CFrame = CFrame.new(pos) * CFrame.Angles(random:NextNumber(-0.2,0.2), random:NextNumber(0, math.pi*2), random:NextNumber(-0.2,0.2)),
+            Material = CONFIG.materials.wall,
+            Color = CONFIG.colors.ancientStone,
+            Parent = model
+        })
+    end
+    return model
+end
+
+local function addBrokenSupport(parent, name, basePosition, forward, fullHeight, breakHeight)
+    local model = newFolder(parent, name)
+    local w = 2.5
+    local pos1 = basePosition + Vector3.new(0, breakHeight/2, 0)
+    addOrientedPart(model, "Stub", Vector3.new(w, breakHeight, w), pos1, forward, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+    
+    local rem = fullHeight - breakHeight
+    local fwd = unitXZ(forward)
+    local pos2 = basePosition + fwd * (rem/2 + 2) + Vector3.new(0, w/2, 0)
+    local fallen = addOrientedPart(model, "Fallen", Vector3.new(w, rem, w), pos2, forward, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+    fallen.CFrame = fallen.CFrame * CFrame.Angles(math.pi/2, random:NextNumber(-0.3,0.3), 0)
+    
+    return model
+end
+
+local function addCrackedFloorPatch(parent, name, centerPosition, forward, patchWidth, patchDepth)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local cf = orientedCFrame(centerPosition, fwd)
+    
+    local base = newPart({
+        Name = "PatchBase",
+        Size = Vector3.new(patchWidth, 0.2, patchDepth),
+        CFrame = cf * CFrame.new(0, 0.1, 0),
+        Material = CONFIG.materials.floor,
+        Color = CONFIG.colors.floor,
+        Parent = model
+    })
+    
+    for i=1, 6 do
+        local cw = random:NextNumber(patchWidth*0.1, patchWidth*0.3)
+        local cd = random:NextNumber(patchDepth*0.1, patchDepth*0.3)
+        local cx = random:NextNumber(-patchWidth/2 + cw/2, patchWidth/2 - cw/2)
+        local cz = random:NextNumber(-patchDepth/2 + cd/2, patchDepth/2 - cd/2)
+        newPart({
+            Name = "Chip_"..i,
+            Size = Vector3.new(cw, 0.25, cd),
+            CFrame = cf * CFrame.new(cx, 0.15, cz) * CFrame.Angles(0, random:NextNumber(0, math.pi*2), 0),
+            Material = CONFIG.materials.rubble,
+            Color = CONFIG.colors.crack,
+            Parent = model
+        })
+    end
+    
+    return model
+end
+
+local function addWarningCarving(parent, name, wallFloorPosition, forward, mountHeight)
+    local model = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local pos = wallFloorPosition + Vector3.new(0, mountHeight, 0)
+    
+    local panel = addOrientedPart(model, "Panel", Vector3.new(4, 4, 0.5), pos, fwd, CONFIG.materials.wall, CONFIG.colors.danger)
+    
+    for i=1, 3 do
+        local sx = random:NextNumber(-1, 1)
+        local sy = random:NextNumber(-1, 1)
+        addOrientedPart(model, "Glyph_"..i, Vector3.new(0.5, 0.1, 0.6), pos + fwd*0.1 + Vector3.new(sx, sy, 0), fwd, CONFIG.materials.neon, CONFIG.colors.danger)
+    end
+    
+    return model
+end
+
+----------------------------------------------------------------------
+-- ROOM A ENVIRONMENTAL STORYTELLING (ported from the reference draft)
+----------------------------------------------------------------------
+local function addSkeletalRemains(parent, name, centerPosition, forward)
+    local remains = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local boneColor = Color3.fromRGB(196, 188, 168)
+
+    newPart({
+        Name = "Skull", Shape = Enum.PartType.Ball, Size = Vector3.new(0.9, 0.8, 0.85),
+        CFrame = CFrame.new(centerPosition + Vector3.new(0, 0.4, 0)) * CFrame.Angles(0, random:NextNumber() * math.pi * 2, 0),
+        Material = Enum.Material.SmoothPlastic, Color = boneColor, Parent = remains,
+    })
+    for rib = 1, 4 do
+        newPart({
+            Name = "Rib_" .. rib, Size = Vector3.new(0.9, 0.15, 0.15),
+            CFrame = CFrame.new(centerPosition + fwd * (0.3 + rib * 0.35) + Vector3.new(0, 0.15, 0)) * CFrame.Angles(0, math.rad(90), math.rad(15)),
+            Material = Enum.Material.SmoothPlastic, Color = boneColor, Parent = remains,
+        })
+    end
+    for limb = 1, 2 do
+        local limbRight = limb == 1 and 1 or -1
+        newPart({
+            Name = "Limb_" .. limb, Size = Vector3.new(0.22, 0.22, 2.2),
+            CFrame = CFrame.new(centerPosition + right * (limbRight * 0.8) + fwd * 1.6 + Vector3.new(0, 0.12, 0)) * CFrame.Angles(0, math.rad(limbRight * 25), 0),
+            Material = Enum.Material.SmoothPlastic, Color = boneColor, Parent = remains,
+        })
+    end
+    return remains
+end
+
+local function addWallAlcove(parent, name, wallFloorPosition, forward, alcoveWidth, alcoveHeight, material, color)
+    local alcove = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local depth = 1.1
+
+    addOrientedPart(alcove, "BackPanel", Vector3.new(alcoveWidth, alcoveHeight, 0.3),
+        wallFloorPosition + fwd * (depth - 0.15) + Vector3.new(0, alcoveHeight/2 + 0.4, 0), fwd, material, CONFIG.colors.ancientStone)
+
+    for _, side in ipairs({-1, 1}) do
+        addOrientedPart(alcove, "Return_" .. (side > 0 and "Right" or "Left"), Vector3.new(0.3, alcoveHeight, depth),
+            wallFloorPosition + right * (side * alcoveWidth/2) + fwd * (depth/2) + Vector3.new(0, alcoveHeight/2 + 0.4, 0), fwd, material, color)
+    end
+
+    addOrientedPart(alcove, "Header", Vector3.new(alcoveWidth + 0.5, 0.4, depth),
+        wallFloorPosition + fwd * (depth/2) + Vector3.new(0, alcoveHeight + 0.4, 0), fwd, material, color)
+    addOrientedPart(alcove, "Sill", Vector3.new(alcoveWidth + 0.3, 0.35, depth),
+        wallFloorPosition + fwd * (depth/2) + Vector3.new(0, 0.4, 0), fwd, material, color)
+
+    addRubblePile(alcove, "SillDebris", wallFloorPosition + fwd * depth + Vector3.new(0, 0.55, 0), 3, 0.5)
+    return alcove
+end
+
+local function addDamagedArch(parent, name, wallFloorPosition, forward, archWidth, wallHeight, material, color)
+    local arch = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+
+    local halfWidth = archWidth / 2
+    local rise = archWidth * 0.32
+    local archRadius = (halfWidth ^ 2 + rise ^ 2) / (2 * rise)
+    local halfSweep = math.asin(math.min(halfWidth / archRadius, 1))
+    local springHeight = wallHeight * 0.42
+    local archCenter = wallFloorPosition + Vector3.new(0, springHeight, 0)
+
+    for _, side in ipairs({-1, 1}) do
+        addOrientedPart(arch, "Springer_" .. (side > 0 and "Right" or "Left"), Vector3.new(1.6, springHeight, 1.3),
+            wallFloorPosition + right * (side * (halfWidth + 0.5)) + fwd * 0.5 + Vector3.new(0, springHeight/2, 0), fwd, material, CONFIG.colors.ancientStone)
+    end
+
+    local voussoirCount = 7
+    local angleStep = (halfSweep * 2) / voussoirCount
+    local blockWidth = 2 * archRadius * math.sin(angleStep / 2) * 1.25
+    local breakIndex = math.floor(voussoirCount * 0.6)
+
+    for index = 0, breakIndex do
+        local angle = (math.pi/2 - halfSweep) + angleStep * (index + 0.5)
+        local position = archCenter + right * (archRadius * math.cos(angle)) + Vector3.new(0, archRadius * math.sin(angle), 0)
+        local tangent = right * -math.sin(angle) + Vector3.new(0, math.cos(angle), 0)
+        local radial = right * math.cos(angle) + Vector3.new(0, math.sin(angle), 0)
+
+        newPart({
+            Name = "Voussoir_" .. (index + 1), Size = Vector3.new(blockWidth, 1.3, 1.1),
+            CFrame = CFrame.fromMatrix(position, tangent, radial),
+            Material = material, Color = CONFIG.colors.ancientStone, Parent = arch,
+        })
+    end
+
+    addCollapsedMasonry(arch, "ArchDebris", wallFloorPosition + right * (halfWidth * 0.6) + fwd * 0.8, 4, 1.6)
+    return arch
+end
+
+local function addBrokenTorchMount(parent, name, wallFloorPosition, forward, mountHeight)
+    local mount = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+
+    addOrientedPart(mount, "Bracket", Vector3.new(0.6, 0.55, 1.2),
+        wallFloorPosition + fwd * 0.3 + Vector3.new(0, mountHeight, 0), fwd, CONFIG.materials.metal, CONFIG.colors.metal)
+
+    newPart({
+        Name = "SnappedStub", Size = Vector3.new(0.3, 0.7, 0.3),
+        CFrame = CFrame.new(wallFloorPosition + fwd * 0.85 + Vector3.new(0, mountHeight + 0.55, 0)) * CFrame.Angles(0, 0, math.rad(35)),
+        Material = CONFIG.materials.torchWood, Color = CONFIG.colors.torchWood, Parent = mount,
+    })
+    newPart({
+        Name = "ScorchMark", Size = Vector3.new(1.1, 1.4, 0.08),
+        CFrame = orientedCFrame(wallFloorPosition + fwd * 0.06 + Vector3.new(0, mountHeight + 0.3, 0), fwd),
+        Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(18, 17, 16), Transparency = 0.35,
+        CanCollide = false, CanQuery = false, Parent = mount,
+    })
+    return mount
+end
+
+local function addFallenCeilingBlock(parent, name, floorPosition, forward, wallSideRight)
+    local block = newFolder(parent, name)
+    local fwd = unitXZ(forward)
+    local right = getRight(fwd)
+    local size = Vector3.new(3.4, 2.6, 3.0)
+
+    newPart({
+        Name = "Slab", Size = size,
+        CFrame = CFrame.new(floorPosition + right * (wallSideRight * 1.4) + Vector3.new(0, size.Y * 0.4, 0))
+            * CFrame.Angles(math.rad(18) * wallSideRight, math.rad(12), math.rad(9) * wallSideRight),
+        Material = CONFIG.materials.wall, Color = CONFIG.colors.ancientStone, Parent = block,
+    })
+    addCollapsedMasonry(block, "SpallDebris", floorPosition + right * (wallSideRight * 2.6), 5, 2.0)
+    return block
+end
+
+local function addCheckpoint(parent, name, position)
+    local part = newPart({
+        Name = name,
+        Size = Vector3.new(5, 0.25, 5),
+        CFrame = CFrame.new(position + Vector3.new(0, 0.125, 0)),
+        Material = Enum.Material.Neon,
+        Color = CONFIG.colors.portal,
+        Transparency = 0.7,
+        CanCollide = false,
+        CanQuery = true,
+        Parent = parent
+    })
+    addGlow(part, CONFIG.colors.portal, 10, 1)
+    return part
+end
+
+
+----------------------------------------------------------------------
+-- TRANSITION CORRIDOR
+----------------------------------------------------------------------
+
+local function buildTransitionCorridor(root, name, startPosition, forward, length, style)
+	local folder = newFolder(root, name)
+	local geomFolder = newFolder(folder, "Geometry")
+	local decFolder = newFolder(folder, "Decoration")
+
+	local width = CONFIG.transitions.corridorWidth
+	local height = CONFIG.transitions.corridorHeight
+	local halfWidth = width / 2
+	local wallThick = CONFIG.transitions.wallThickness
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+
+	local center = startPosition + fwd * (length / 2)
+	local floorY = startPosition.Y
+
+	-- Floor
+	addOrientedPart(geomFolder, "Floor",
+		Vector3.new(width, 1, length),
+		center + Vector3.new(0, -0.5, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.floor)
+
+	-- Ceiling
+	addOrientedPart(geomFolder, "Ceiling",
+		Vector3.new(width, 1, length),
+		center + Vector3.new(0, height + 0.5, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.wallDark)
+
+	-- Left Wall
+	addOrientedPart(geomFolder, "LeftWall",
+		Vector3.new(wallThick, height, length),
+		center - right * (halfWidth + wallThick / 2) + Vector3.new(0, height / 2, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+
+	-- Right Wall
+	addOrientedPart(geomFolder, "RightWall",
+		Vector3.new(wallThick, height, length),
+		center + right * (halfWidth + wallThick / 2) + Vector3.new(0, height / 2, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+
+	-- Cornice + Baseboard on both walls
+	local leftFacePos = startPosition - right * halfWidth
+	local rightFacePos = startPosition + right * halfWidth
+
+	addCorniceBand(decFolder, "CorniceL", leftFacePos, fwd, length, height, CONFIG.materials.trim, CONFIG.colors.trim)
+	addCorniceBand(decFolder, "CorniceR", rightFacePos, fwd, length, height, CONFIG.materials.trim, CONFIG.colors.trim)
+	addBaseboardBand(decFolder, "BaseboardL", leftFacePos, fwd, length, CONFIG.materials.trim, CONFIG.colors.trim)
+	addBaseboardBand(decFolder, "BaseboardR", rightFacePos, fwd, length, CONFIG.materials.trim, CONFIG.colors.trim)
+
+	-- Ceiling beams
+	layCeilingBeams(decFolder, "Beam", startPosition, fwd, width, height, 4, length - 4, CONFIG.materials.wood, CONFIG.colors.wood)
+
+	-- Torches
+	if style == "collapse" then
+		local rng = Random.new(math.floor(math.abs(startPosition.X + startPosition.Z)) + 7777)
+		for t = CONFIG.detail.torchSpacing, length - 10, CONFIG.detail.torchSpacing * 2 do
+			if rng:NextNumber() > 0.3 then
+				addWallTorch(decFolder, "TorchL_" .. t, startPosition - right * halfWidth + fwd * t, right, CONFIG.detail.torchHeight)
+			end
+			if rng:NextNumber() > 0.3 then
+				addWallTorch(decFolder, "TorchR_" .. t, startPosition + right * halfWidth + fwd * t, -right, CONFIG.detail.torchHeight)
+			end
+		end
+		-- Debris
+		for i = 1, 3 do
+			local zOff = rng:NextNumber() * (length - 20) + 10
+			addCollapsedMasonry(decFolder, "Rubble_" .. i,
+				startPosition + fwd * zOff + right * (rng:NextNumber() - 0.5) * (width - 6),
+				5, 3)
+		end
+	else
+		layWallTorches(decFolder, "TorchL", startPosition - right * halfWidth, fwd, right, 5, length - 5)
+		layWallTorches(decFolder, "TorchR", startPosition + right * halfWidth, fwd, -right, 5, length - 5)
+	end
+
+	-- Door frames
+	buildDoorFrame(geomFolder, "EntryFrame", startPosition + Vector3.new(0, 0, 0), fwd, width, height, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+	local exitPosition = startPosition + fwd * length
+	buildDoorFrame(geomFolder, "ExitFrame", exitPosition, fwd, width, height, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+	return folder, exitPosition
+end
+
+----------------------------------------------------------------------
+-- ROOM A: TRAP CORRIDOR
+----------------------------------------------------------------------
+-- Structure and hazard generation ported from the Room A reference
+-- draft: continuous single-piece walls/floor/ceiling -- no segment
+-- joins, which is what eliminates visible construction seams -- plus
+-- the full weighted hazard system (entrance gauntlet phase, an
+-- escalating main-course phase with combo encounters, occasional
+-- zig-zag divider sequences, and probabilistic environmental
+-- storytelling). Hazards now fire from the floor, the ceiling, AND
+-- both side walls (the earlier version only had floor + ceiling).
+--
+-- Integration notes vs. the standalone draft (both documented here and
+-- in the delivery summary, since "port faithfully" still means the
+-- surrounding chamber has to stay consistent):
+--   * No "ExitWall" is built -- the standalone draft caps the far end
+--     because it's tested in isolation; here Room A already flows into
+--     Transition_A_B's own gate/portcullis built by the main generator,
+--     so a second solid wall would just create a redundant double-door.
+--   * Wall thickness stays at 2 studs (this chamber's established
+--     convention) rather than the draft's 1 stud -- cosmetic only.
+--   * Ceiling beams and corner pilasters use stone (CONFIG.materials/
+--     colors.wall), matching the draft, not the wood used elsewhere.
+
+local ROOMA_TRAP_FOOTPRINT_DEPTH = CONFIG.spikeTrap.depth + CONFIG.spikeTrap.housingMargin * 2
+local ROOMA_TRAP_CLEARANCE = ROOMA_TRAP_FOOTPRINT_DEPTH + 5
+
+local function generateRoomAObstacleCourse(room, entrancePosition, forward, length, width, height)
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+	local leftWallOrigin = entrancePosition - right * (width / 2)
+	local rightWallOrigin = entrancePosition + right * (width / 2)
+	local roomCfg = CONFIG.roomA
+	local hazardRandom = Random.new(roomCfg.hazardSeed)
+
+	local trapIndex = 1
+	local bladeIndex = 1
+	local decorIndex = 1
+	local zigzagIndex = 1
+	local bladePivotY = height - CONFIG.swingingBlade.mountDrop
+	local dividerWidth = width * 0.62
+	local hazardEnd = length - roomCfg.hazardEndOffset
+	local finalStretchStart = hazardEnd - 35
+
+	local function nextSpacing()
+		return hazardRandom:NextInteger(roomCfg.spacingMin, roomCfg.spacingMax)
+	end
+
+	local function placeBlade(dist, lateralOffset)
+		lateralOffset = lateralOffset or 0
+		local blade = buildSwingingBlade(room, "SwingingBlade_" .. bladeIndex,
+			entrancePosition + fwd * dist + right * lateralOffset + Vector3.new(0, bladePivotY, 0), fwd)
+		blade:SetAttribute("PhaseOffset", hazardRandom:NextNumber())
+		bladeIndex = bladeIndex + 1
+		return blade
+	end
+
+	local function placeFloor(dist, lateralOffset)
+		lateralOffset = lateralOffset or 0
+		buildSpikeTrap(room, "SpikeTrap_" .. trapIndex, entrancePosition + fwd * dist + right * lateralOffset, fwd)
+		trapIndex = trapIndex + 1
+	end
+
+	local function placeCeiling(dist)
+		buildCeilingSpike(room, "CeilingSpike_" .. trapIndex, entrancePosition + fwd * dist + Vector3.new(0, height, 0), fwd)
+		trapIndex = trapIndex + 1
+	end
+
+	local function placeWallLeft(dist)
+		buildWallSpike(room, "WallSpike_" .. trapIndex, leftWallOrigin + fwd * dist + Vector3.new(0, height / 2 - 3, 0), fwd, false)
+		trapIndex = trapIndex + 1
+	end
+
+	local function placeWallRight(dist)
+		buildWallSpike(room, "WallSpike_" .. trapIndex, rightWallOrigin + fwd * dist + Vector3.new(0, height / 2 - 3, 0), fwd, true)
+		trapIndex = trapIndex + 1
+	end
+
+	local encounterHasTrap = {
+		floor = true, ceiling = true, wallLeft = true, wallRight = true, blade = false,
+		floorBlade = true, ceilingBlade = true, opposingWalls = true, crushRight = true, crushLeft = true, doubleCeiling = true,
+	}
+
+	local encounterWeights = {
+		{ id = "floor", weight = 18 }, { id = "ceiling", weight = 18 },
+		{ id = "wallLeft", weight = 14 }, { id = "wallRight", weight = 14 },
+		{ id = "blade", weight = 12 }, { id = "floorBlade", weight = 10 },
+		{ id = "ceilingBlade", weight = 8 }, { id = "opposingWalls", weight = 10 },
+		{ id = "crushRight", weight = 5 }, { id = "crushLeft", weight = 5 },
+		{ id = "doubleCeiling", weight = 6 },
+	}
+
+	local finalEncounterWeights = {
+		{ id = "floorBlade", weight = 14 }, { id = "ceilingBlade", weight = 12 },
+		{ id = "opposingWalls", weight = 14 }, { id = "crushRight", weight = 10 },
+		{ id = "crushLeft", weight = 10 }, { id = "floor", weight = 8 },
+		{ id = "ceiling", weight = 8 }, { id = "blade", weight = 10 },
+		{ id = "wallLeft", weight = 7 }, { id = "wallRight", weight = 7 },
+	}
+
+	local function pickEncounterId(inFinalStretch)
+		local pool = inFinalStretch and finalEncounterWeights or encounterWeights
+		local totalWeight = 0
+		for _, entry in ipairs(pool) do totalWeight = totalWeight + entry.weight end
+		local roll = hazardRandom:NextNumber() * totalWeight
+		local cumulative = 0
+		for _, entry in ipairs(pool) do
+			cumulative = cumulative + entry.weight
+			if roll <= cumulative then return entry.id end
+		end
+		return pool[1].id
+	end
+
+	local encounters = {
+		floor = function(dist) placeFloor(dist) end,
+		ceiling = function(dist) placeCeiling(dist) end,
+		wallLeft = function(dist) placeWallLeft(dist) end,
+		wallRight = function(dist) placeWallRight(dist) end,
+		blade = function(dist) placeBlade(dist) end,
+		floorBlade = function(dist) placeFloor(dist); placeBlade(dist) end,
+		ceilingBlade = function(dist) placeCeiling(dist); placeBlade(dist, hazardRandom:NextInteger(-1, 1) * 2) end,
+		opposingWalls = function(dist) placeWallLeft(dist); placeWallRight(dist) end,
+		crushRight = function(dist) placeWallRight(dist); placeFloor(dist, -3) end,
+		crushLeft = function(dist) placeWallLeft(dist); placeFloor(dist, 3) end,
+		doubleCeiling = function(dist)
+			placeCeiling(dist)
+			if dist + ROOMA_TRAP_CLEARANCE < hazardEnd then placeCeiling(dist + ROOMA_TRAP_CLEARANCE) end
+		end,
+	}
+
+	local function tryPlaceDecor(dist)
+		if hazardRandom:NextNumber() > 0.22 then return end
+		local side = hazardRandom:NextInteger(0, 1) == 0 and -1 or 1
+		local decorType = hazardRandom:NextInteger(1, 6)
+		local name = "Decor_" .. decorIndex
+		decorIndex = decorIndex + 1
+
+		if decorType == 1 then
+			addRubblePile(room, name, entrancePosition + fwd * dist + right * side * (width / 2 - 2.5), 4 + hazardRandom:NextInteger(0, 2), 2)
+		elseif decorType == 2 then
+			addCollapsedMasonry(room, name, entrancePosition + fwd * dist + right * side * (width / 2 - 2.5), 4, 2)
+		elseif decorType == 3 then
+			addFallenCeilingBlock(room, name, leftWallOrigin + fwd * dist, fwd, side)
+		elseif decorType == 4 then
+			addWallAlcove(room, name, (side < 0 and leftWallOrigin or rightWallOrigin) + fwd * dist,
+				side < 0 and right or -right, 2.4, 3.2, CONFIG.materials.wall, CONFIG.colors.wall)
+		elseif decorType == 5 then
+			addDamagedArch(room, name, (side < 0 and leftWallOrigin or rightWallOrigin) + fwd * dist,
+				side < 0 and right or -right, 4 + hazardRandom:NextNumber() * 0.8, height, CONFIG.materials.wall, CONFIG.colors.wall)
+		else
+			addBrokenSupport(room, name, (side < 0 and leftWallOrigin or rightWallOrigin) + fwd * dist,
+				fwd, height, height * (0.35 + hazardRandom:NextNumber() * 0.15))
+		end
+	end
+
+	local function placeZigzagSequence(startDist)
+		if startDist + 36 > hazardEnd then return startDist end
+		local leftDist = startDist
+		local rightDist = startDist + 14
+
+		addOrientedPart(room, "ZigzagDividerLeft_" .. zigzagIndex, Vector3.new(dividerWidth, height, 1.5),
+			entrancePosition + fwd * leftDist - right * (width / 2 - dividerWidth / 2) + Vector3.new(0, height / 2, 0),
+			fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+		addPilaster(room, "DividerBraceLeft_" .. zigzagIndex, leftWallOrigin + fwd * leftDist, fwd, height, CONFIG.materials.wall, CONFIG.colors.wall)
+		placeBlade(leftDist, dividerWidth / 2)
+
+		addOrientedPart(room, "ZigzagDividerRight_" .. zigzagIndex, Vector3.new(dividerWidth, height, 1.5),
+			entrancePosition + fwd * rightDist + right * (width / 2 - dividerWidth / 2) + Vector3.new(0, height / 2, 0),
+			fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+		addPilaster(room, "DividerBraceRight_" .. zigzagIndex, rightWallOrigin + fwd * rightDist, fwd, height, CONFIG.materials.wall, CONFIG.colors.wall)
+		placeBlade(rightDist, -dividerWidth / 2)
+
+		zigzagIndex = zigzagIndex + 1
+		return rightDist + nextSpacing()
+	end
+
+	local function entranceSpacing()
+		return hazardRandom:NextInteger(roomCfg.connectorSpacingMin, roomCfg.connectorSpacingMax)
+	end
+
+	local function placeEntranceGauntlet()
+		local gauntletEnd = math.min(roomCfg.entranceGauntletEnd, hazardEnd - 10)
+		local currentDist = roomCfg.hazardStart
+
+		local gauntletEncounters = {
+			{ hasTrap = true, place = function(dist) placeCeiling(dist) end },
+			{ hasTrap = true, place = function(dist) placeFloor(dist) end },
+			{ hasTrap = true, place = function(dist) placeWallRight(dist) end },
+			{ hasTrap = true, place = function(dist) placeWallLeft(dist) end },
+			{ hasTrap = false, place = function(dist) placeBlade(dist) end },
+			{ hasTrap = true, place = function(dist) placeFloor(dist); placeBlade(dist, hazardRandom:NextInteger(-1, 1) * 2) end },
+			{ hasTrap = true, place = function(dist) placeCeiling(dist); placeBlade(dist) end },
+			{ hasTrap = true, place = function(dist) placeWallRight(dist); placeFloor(dist, -3) end },
+			{ hasTrap = true, place = function(dist) placeWallLeft(dist); placeFloor(dist, 3) end },
+			{ hasTrap = true, place = function(dist) placeWallLeft(dist); placeWallRight(dist) end },
+		}
+
+		while currentDist < gauntletEnd do
+			local encounter = gauntletEncounters[hazardRandom:NextInteger(1, #gauntletEncounters)]
+			encounter.place(currentDist)
+			local spacing = entranceSpacing()
+			if encounter.hasTrap then
+				spacing = math.max(spacing, ROOMA_TRAP_CLEARANCE)
+			end
+			currentDist = currentDist + spacing
+		end
+		return currentDist
+	end
+
+	-- Fixed entrance storytelling
+	addRubblePile(room, "RubbleNearEntrance", entrancePosition + fwd * 6 - right * (width / 2 - 2.5), 6, 2.5)
+	addCollapsedMasonry(room, "CaveInNearEntrance", entrancePosition + fwd * 7 + right * (width / 2 - 3), 5, 2.2)
+	addWarningCarving(room, "WarningCarving", leftWallOrigin + fwd * 11, right, height * 0.55)
+	addSkeletalRemains(room, "FallenTrialTaker", entrancePosition + fwd * 8 + right * (width / 2 - 2), fwd)
+
+	local currentDist = placeEntranceGauntlet()
+
+	while currentDist < hazardEnd do
+		local inFinalStretch = currentDist >= finalStretchStart
+		if hazardRandom:NextNumber() < 0.07 and currentDist + 36 < hazardEnd then
+			currentDist = placeZigzagSequence(currentDist)
+		else
+			local encounterId = pickEncounterId(inFinalStretch)
+			encounters[encounterId](currentDist)
+			local spacing = nextSpacing()
+			if encounterHasTrap[encounterId] then
+				spacing = math.max(spacing, ROOMA_TRAP_CLEARANCE)
+			end
+			tryPlaceDecor(currentDist + spacing * 0.5)
+			currentDist = currentDist + spacing
+		end
+	end
+
+	-- Exit dressing before the portcullis
+	local exitDressDist = length - 22
+	addCrackedFloorPatch(room, "CrackedFloorNearDoor", entrancePosition + fwd * exitDressDist, fwd, width - 4, 6)
+	addRubblePile(room, "RubbleNearExit", entrancePosition + fwd * (exitDressDist + 6) + right * (width / 2 - 2.5), 6, 2.5)
+	buildPortcullisDoor(room, "ExitPortcullis", entrancePosition + fwd * (length - 12), fwd, width - 1, height)
+	addBrokenTorchMount(room, "BrokenTorch_2", leftWallOrigin + fwd * (length - 8), right, CONFIG.detail.torchHeight)
+	addWallAlcove(room, "AlcoveNiche_Last", rightWallOrigin + fwd * (length - 3), -right, 2.4, 3.2, CONFIG.materials.wall, CONFIG.colors.wall)
+	addDamagedArch(room, "DamagedArch_Last", leftWallOrigin + fwd * (length - 2), right, 4.2, height, CONFIG.materials.wall, CONFIG.colors.wall)
+end
+
+local function buildRoomA(root, entrancePosition, forward)
+	local folder = newFolder(root, "RoomA_TrapCorridor")
+	local markersFolder = newFolder(folder, "Markers")
+
+	local width = CONFIG.roomA.width
+	local height = CONFIG.roomA.height
+	local length = CONFIG.roomA.length
+	local wallThick = 2
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+
+	-- Continuous, single-piece structural shell -- entrance to exit, no
+	-- segment joins.
+	addOrientedPart(folder, "Floor", Vector3.new(width, 1, length),
+		entrancePosition + fwd * (length / 2) + Vector3.new(0, -0.5, 0), fwd, CONFIG.materials.floor, CONFIG.colors.floor)
+	addOrientedPart(folder, "Ceiling", Vector3.new(width, 1, length),
+		entrancePosition + fwd * (length / 2) + Vector3.new(0, height + 0.5, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+	addOrientedPart(folder, "WallLeft", Vector3.new(wallThick, height, length),
+		entrancePosition + fwd * (length / 2) - right * (width / 2) + Vector3.new(0, height / 2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+	addOrientedPart(folder, "WallRight", Vector3.new(wallThick, height, length),
+		entrancePosition + fwd * (length / 2) + right * (width / 2) + Vector3.new(0, height / 2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+
+	buildDoorFrame(folder, "EntranceDoor", entrancePosition, fwd, width, height, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+	local leftWallOrigin = entrancePosition - right * (width / 2)
+	local rightWallOrigin = entrancePosition + right * (width / 2)
+
+	addCorniceBand(folder, "WallLeft", leftWallOrigin, fwd, length, height, CONFIG.materials.trim, CONFIG.colors.trim)
+	addCorniceBand(folder, "WallRight", rightWallOrigin, fwd, length, height, CONFIG.materials.trim, CONFIG.colors.trim)
+	addBaseboardBand(folder, "WallLeft", leftWallOrigin, fwd, length, CONFIG.materials.trim, CONFIG.colors.trim)
+	addBaseboardBand(folder, "WallRight", rightWallOrigin, fwd, length, CONFIG.materials.trim, CONFIG.colors.trim)
+	layCeilingBeams(folder, "Beam", entrancePosition, fwd, width, height, 0, length, CONFIG.materials.wall, CONFIG.colors.wall)
+	layWallTorches(folder, "TorchLeft", leftWallOrigin, fwd, right, 0, length)
+	layWallTorches(folder, "TorchRight", rightWallOrigin, fwd, -right, 0, length)
+
+	addPilaster(folder, "CornerEntranceLeft", leftWallOrigin, fwd, height, CONFIG.materials.wall, CONFIG.colors.wall)
+	addPilaster(folder, "CornerEntranceRight", rightWallOrigin, fwd, height, CONFIG.materials.wall, CONFIG.colors.wall)
+	addPilaster(folder, "CornerExitLeft", leftWallOrigin + fwd * length, fwd, height, CONFIG.materials.wall, CONFIG.colors.wall)
+	addPilaster(folder, "CornerExitRight", rightWallOrigin + fwd * length, fwd, height, CONFIG.materials.wall, CONFIG.colors.wall)
+
+	generateRoomAObstacleCourse(folder, entrancePosition, fwd, length, width, height)
+
+	local exitPosition = entrancePosition + fwd * length
+
+	addCheckpoint(markersFolder, "RoomA_Start", entrancePosition)
+	addCheckpoint(markersFolder, "RoomA_End", exitPosition + fwd * 5)
+
+	return folder, exitPosition
+end
+
+----------------------------------------------------------------------
+-- ROOM B: COMBAT COURTYARD (chamfered corners, open-air)
+----------------------------------------------------------------------
+
+local function buildRoomB(root, entrancePosition, forward)
+	local folder = newFolder(root, "RoomB_CombatCourtyard")
+	local geomFolder = newFolder(folder, "Geometry")
+	local arenaFolder = newFolder(folder, "Arena")
+	local decFolder = newFolder(folder, "Decoration")
+	local markersFolder = newFolder(folder, "Markers")
+
+	local radius = CONFIG.roomB.radius
+	local height = CONFIG.roomB.wallHeight
+	local wallThick = 2
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+	
+	local center = entrancePosition + fwd * radius
+	local bRng = Random.new(20260850)
+
+	-- Floor
+	local floorPart = newPart({
+		Name = "Floor",
+		Size = Vector3.new(1, radius * 2, radius * 2),
+		CFrame = CFrame.new(center + Vector3.new(0, -0.5, 0)) * CFrame.Angles(0, 0, math.pi / 2),
+		Shape = Enum.PartType.Cylinder,
+		Material = CONFIG.materials.floor,
+		Color = CONFIG.colors.floor,
+		Parent = geomFolder
+	})
+
+	----------------------------------------------------------------------
+	-- Octagonal walls (8 segments)
+	----------------------------------------------------------------------
+	local numSides = 8
+	local angleStep = (math.pi * 2) / numSides
+	local sideLength = 2 * radius * math.tan(math.pi / numSides)
+	
+	for i = 0, numSides - 1 do
+		-- Start from South (Entrance, i=0)
+		local angle = i * angleStep
+		local wallNormal = (-fwd * math.cos(angle) + right * math.sin(angle)).Unit
+		local wallCenter = center + wallNormal * radius
+		local wallRight = getRight(wallNormal)
+		local segName = "Wall_"..i
+		
+		-- Entrance and Exit gates
+		if i == 0 then -- Entrance side
+			local archW = 16
+			local sidePieceL = (sideLength - archW) / 2
+			addOrientedPart(geomFolder, segName.."L", Vector3.new(sidePieceL, height, wallThick), wallCenter - wallRight * (archW/2 + sidePieceL/2) + Vector3.new(0, height/2, 0), -wallNormal, CONFIG.materials.wall, CONFIG.colors.wall)
+			addOrientedPart(geomFolder, segName.."R", Vector3.new(sidePieceL, height, wallThick), wallCenter + wallRight * (archW/2 + sidePieceL/2) + Vector3.new(0, height/2, 0), -wallNormal, CONFIG.materials.wall, CONFIG.colors.wall)
+			buildAncientArch(geomFolder, "EntranceArch", wallCenter, -wallNormal, archW, height, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		elseif i == 4 then -- Exit side (North)
+			local archW = 16
+			local sidePieceL = (sideLength - archW) / 2
+			addOrientedPart(geomFolder, segName.."L", Vector3.new(sidePieceL, height, wallThick), wallCenter - wallRight * (archW/2 + sidePieceL/2) + Vector3.new(0, height/2, 0), -wallNormal, CONFIG.materials.wall, CONFIG.colors.wall)
+			addOrientedPart(geomFolder, segName.."R", Vector3.new(sidePieceL, height, wallThick), wallCenter + wallRight * (archW/2 + sidePieceL/2) + Vector3.new(0, height/2, 0), -wallNormal, CONFIG.materials.wall, CONFIG.colors.wall)
+			buildAncientArch(geomFolder, "ExitArch", wallCenter, -wallNormal, archW, height, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		else
+			-- Standard solid wall segment
+			addOrientedPart(geomFolder, segName, Vector3.new(sideLength, height, wallThick), wallCenter + Vector3.new(0, height/2, 0), -wallNormal, CONFIG.materials.wall, CONFIG.colors.wall)
+		end
+		
+		-- Trim
+		addCorniceBand(decFolder, segName .. "_Cornice", wallCenter, -wallNormal, sideLength, height, CONFIG.materials.trim, CONFIG.colors.trim)
+		addBaseboardBand(decFolder, segName .. "_Baseboard", wallCenter, -wallNormal, sideLength, CONFIG.materials.trim, CONFIG.colors.trim)
+
+		-- Corner pillars
+		local cornerAngle = angle + angleStep/2
+		local cornerNormal = (-fwd * math.cos(cornerAngle) + right * math.sin(cornerAngle)).Unit
+		local cornerDist = radius / math.cos(math.pi/numSides)
+		local cornerPos = center + cornerNormal * cornerDist
+		addPilaster(decFolder, "Pilaster_"..i, cornerPos, -cornerNormal, height, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		
+		-- Statues and water at the 4 diagonal corners (i = 1,3,5,7)
+		if i % 2 == 1 then
+			buildStatue(decFolder, "Statue_" .. i, cornerPos - cornerNormal * 2, -cornerNormal, 10, "standing")
+			buildAncientArch(decFolder, "StatueFrame_" .. i, cornerPos - cornerNormal * 2.2, -cornerNormal, 6, 11, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+			
+			-- Water channels along diagonal walls
+			local chanW = CONFIG.roomB.waterChannelWidth
+			local chanDepth = CONFIG.roomB.waterDepth
+			local bThick = 1
+			local chanPos = center + wallNormal * (radius - wallThick - chanW/2 - bThick)
+			local cStart = chanPos - wallRight * (sideLength/2 - 4)
+			buildWaterChannel(decFolder, "Water_"..i, cStart, wallRight, sideLength - 8, chanW, chanDepth)
+			
+			addOrientedPart(decFolder, "WaterBorderL_"..i, Vector3.new(bThick, 1.2, sideLength - 8), chanPos - wallNormal * (chanW/2 + bThick/2) + Vector3.new(0,-0.4,0), wallRight, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+			addOrientedPart(decFolder, "WaterBorderR_"..i, Vector3.new(bThick, 1.2, sideLength - 8), chanPos + wallNormal * (chanW/2 + bThick/2) + Vector3.new(0,-0.4,0), wallRight, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+			-- Algae along the channel -- Room B should read as overgrown near its water
+			buildAlgaeCluster(decFolder, "WaterAlgae_"..i.."_A", cStart + wallRight * (sideLength * 0.2), wallRight, bRng, CONFIG.vegetation.density.roomB)
+			buildAlgaeCluster(decFolder, "WaterAlgae_"..i.."_B", cStart + wallRight * (sideLength * 0.6), wallRight, bRng, CONFIG.vegetation.density.roomB)
+		else
+			if i ~= 0 and i ~= 4 then
+				-- Torches on main walls
+				addWallTorch(decFolder, segName .. "_Torch", wallCenter - wallNormal * (wallThick / 2), -wallNormal, CONFIG.detail.torchHeight)
+			end
+		end
+	end
+
+	----------------------------------------------------------------------
+	-- Extra decoration (benches, rubble, moss)
+	----------------------------------------------------------------------
+	-- Benches around arena
+	for i = 1, 4 do
+		local angle = (i / 4) * math.pi * 2 + math.pi/4
+		local bPos = center + Vector3.new(math.sin(angle), 0, math.cos(angle)) * 20
+		local bDir = (center - bPos).Unit
+		local bRight = getRight(bDir)
+		-- Bench seat
+		addOrientedPart(decFolder, "Bench_"..i, Vector3.new(6, 1.2, 2), bPos + Vector3.new(0, 0.6, 0), bDir, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		-- Bench supports
+		addOrientedPart(decFolder, "BenchSupport1_"..i, Vector3.new(1.5, 0.6, 2), bPos - bRight*2 + Vector3.new(0, 0.3, 0), bDir, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		addOrientedPart(decFolder, "BenchSupport2_"..i, Vector3.new(1.5, 0.6, 2), bPos + bRight*2 + Vector3.new(0, 0.3, 0), bDir, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	end
+
+	-- Moss on floor edges
+	for i = 1, 6 do
+		local angle = (i / 6) * math.pi * 2
+		local mPos = center + Vector3.new(math.sin(angle), 0, math.cos(angle)) * (radius - 6)
+		buildMossPatch(decFolder, "Moss_" .. i, mPos, fwd, 4, 4)
+	end
+
+	-- Rocks/broken stones distributed around the edges (never the clear
+	-- central combat area) -- size, rotation and clustering all vary.
+	for i = 1, 10 do
+		local angle = bRng:NextNumber(0, math.pi * 2)
+		local ringR = radius - bRng:NextNumber(3, 9)
+		local rPos = center + Vector3.new(math.sin(angle), 0, math.cos(angle)) * ringR
+		addRubblePile(decFolder, "EdgeRock_" .. i, rPos, bRng:NextInteger(3, 7), bRng:NextNumber(1.5, 4))
+	end
+	addRubblePile(decFolder, "Rubble_1", center - fwd * 15 - right * 15, 5, 3)
+	addRubblePile(decFolder, "Rubble_2", center + fwd * 15 + right * 15, 4, 2.5)
+	addRubblePile(decFolder, "Rubble_3", center - fwd * 18 + right * 15, 6, 4)
+
+	----------------------------------------------------------------------
+	-- Markers
+	----------------------------------------------------------------------
+	local exitPosition = entrancePosition + fwd * (radius * 2)
+	addCheckpoint(markersFolder, "RoomB_Start", entrancePosition)
+	addCheckpoint(markersFolder, "RoomB_End", exitPosition + fwd * 5)
+
+	-- Golem: this is a pre-built 3D model, NOT generator geometry. The
+	-- generator only builds the pedestal it stands on and a spawn marker;
+	-- if a model matching CONFIG.roomB.golemModelName already exists in
+	-- ServerStorage, it's cloned into place automatically. If not, the
+	-- marker is still there for the encounter script to spawn into.
+	local golemPedestal = newPart({
+		Name = "GolemPedestal",
+		Size = Vector3.new(CONFIG.roomB.golemPedestalRadius * 2, 1, CONFIG.roomB.golemPedestalRadius * 2),
+		CFrame = CFrame.new(center - Vector3.new(0, 0.3, 0)) * CFrame.Angles(0, 0, math.pi/2),
+		Shape = Enum.PartType.Cylinder,
+		Material = CONFIG.materials.wall, Color = CONFIG.colors.ancientStone,
+		Parent = arenaFolder
+	})
+
+	local spawnMarker = newPart({
+		Name = "RoomB_GolemSpawn",
+		Size = Vector3.new(1, 1, 1),
+		CFrame = CFrame.new(center + Vector3.new(0, 2, 0)),
+		Transparency = 1, CanCollide = false,
+		Parent = markersFolder
+	})
+
+	spawnExternalModel(arenaFolder, CONFIG.roomB.golemStorageService, CONFIG.roomB.golemModelName, CFrame.new(center + Vector3.new(0, 1, 0)))
+
+	local centerMarker = newPart({
+		Name = "RoomB_ArenaCenter",
+		Size = Vector3.new(1, 1, 1),
+		CFrame = CFrame.new(center + Vector3.new(0, 0.5, 0)),
+		Transparency = 1, CanCollide = false,
+		Parent = markersFolder
+	})
+
+	return folder, exitPosition
+end
+
+----------------------------------------------------------------------
+-- TRANSITION HELPER
+----------------------------------------------------------------------
+
+local function buildStandardTransition(root, name, startPosition, forward)
+	return buildTransitionCorridor(root, name, startPosition, forward, CONFIG.transitions.standardLength, "standard")
+end
+
+
+----------------------------------------------------------------------
+-- ROOM C: OASIS SANCTUARY
+----------------------------------------------------------------------
+
+local function buildRoomC(root, entrancePosition, forward)
+	local folder = newFolder(root, "RoomC_OasisSanctuary")
+	local archFolder = newFolder(folder, "Architecture")
+	local heartFolder = newFolder(folder, "Heart")
+	local waterFolder = newFolder(folder, "Water")
+	local decorFolder = newFolder(folder, "Decoration")
+	local markersFolder = newFolder(folder, "Markers")
+
+	local radius = CONFIG.roomC.radius
+	local height = CONFIG.roomC.wallHeight
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+	local center = entrancePosition + fwd * radius
+	local dRng = Random.new(20260901)
+
+	-- Floor
+	addOrientedPart(archFolder, "Floor",
+		Vector3.new(radius * 2, 1, radius * 2),
+		center + Vector3.new(0, -0.5, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+
+	-- Circular wall ring (16 segments)
+	local segmentCount = 16
+	local angleStep = math.pi * 2 / segmentCount
+	local wallWidth = (radius * 2 * math.pi) / segmentCount * 1.05
+
+	for i = 0, segmentCount - 1 do
+		local angle = i * angleStep
+		local offset = Vector3.new(math.sin(angle), 0, math.cos(angle)) * radius
+		local wallPos = center + offset + Vector3.new(0, height / 2, 0)
+		
+		-- Check distance to entrance/exit to leave gaps
+		local distToEnt = (wallPos * Vector3.new(1,0,1) - entrancePosition * Vector3.new(1,0,1)).Magnitude
+		local exitPosExact = center + fwd * radius
+		local distToExit = (wallPos * Vector3.new(1,0,1) - exitPosExact * Vector3.new(1,0,1)).Magnitude
+
+		if distToEnt > 10 and distToExit > 10 then
+			local inward = (center - wallPos).Unit
+			inward = unitXZ(inward)
+			addOrientedPart(archFolder, "WallSegment_" .. i,
+				Vector3.new(wallWidth, height, 2),
+				wallPos, inward, CONFIG.materials.wall, CONFIG.colors.wall)
+				
+			-- Occasional carved stone relief on the walls
+			if dRng:NextNumber() > 0.6 then
+				local reliefPos = wallPos + inward * 1.2 - Vector3.new(0, height/4, 0)
+				addOrientedPart(decorFolder, "WallRelief_"..i, Vector3.new(8, 6, 0.6), reliefPos, inward, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+			end
+			
+			-- Vines hanging down the walls
+			if dRng:NextNumber() > 0.4 then
+				buildVineStrip(decorFolder, "WallVine_"..i, wallPos + Vector3.new(0, height/2, 0) + inward * 1.2, height * 0.4 + dRng:NextNumber() * height * 0.4)
+			end
+		end
+	end
+
+	-- Internal arches (8)
+	local archCount = CONFIG.roomC.archCount
+	local archAngleStep = math.pi * 2 / archCount
+	for i = 1, archCount do
+		local angle = i * archAngleStep
+		local offset = Vector3.new(math.sin(angle), 0, math.cos(angle)) * (radius - 6)
+		local archPos = center + offset
+		local inward = (center - archPos).Unit
+		
+		buildAncientArch(archFolder, "Arch_" .. i, archPos, inward, CONFIG.roomC.archWidth, CONFIG.roomC.archHeight, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		
+		-- Wall Torches between arches
+		local torchAngle = angle + (archAngleStep / 2)
+		local tOffset = Vector3.new(math.sin(torchAngle), 0, math.cos(torchAngle)) * (radius - 1)
+		local tPos = center + tOffset
+		local tInward = (center - tPos).Unit
+		local torch = addWallTorch(decorFolder, "Torch_" .. i, tPos, tInward, 10)
+		-- Golden light modifier for torches in this room
+		local flame = torch:FindFirstChild("Flame")
+		if flame then
+			local light = flame:FindFirstChildOfClass("PointLight")
+			if light then light.Color = CONFIG.colors.sacred end
+		end
+		
+		-- Pillars between arches
+		buildStonePillar(decorFolder, "PerimeterPillar_"..i, tPos + tInward*3, height * 0.8, 1.2, CONFIG.materials.wall, CONFIG.colors.ancientStone, dRng:NextNumber() > 0.7)
+
+		-- Algae at every arch base and pillar base -- Room C is the most overgrown room in the chamber
+		buildMossPatch(decorFolder, "ArchMoss_"..i, archPos + inward * 1.5, inward, 3.5 + dRng:NextNumber()*2, 2.5 + dRng:NextNumber()*1.5)
+		buildMossPatch(decorFolder, "PillarMoss_"..i, tPos + tInward*3, tInward, 2 + dRng:NextNumber(), 2 + dRng:NextNumber())
+		if dRng:NextNumber() > 0.3 then
+			buildVineStrip(decorFolder, "ArchVine_"..i, archPos + Vector3.new(0, CONFIG.roomC.archHeight, 0), CONFIG.roomC.archHeight * 0.3 + dRng:NextNumber() * CONFIG.roomC.archHeight * 0.3)
+		end
+	end
+
+	-- Segmented Dome Roof (hole in middle for sunlight)
+	local ceilThick = 2
+	local roofSegments = 16
+	local roofAngle = math.pi * 2 / roofSegments
+	local outerRadius = radius + 2
+	local innerRadius = 10
+	
+	for r = 0, roofSegments - 1 do
+		local a = r * roofAngle
+		local midA = a + roofAngle/2
+		local dir = (fwd * math.cos(midA) + right * math.sin(midA)).Unit
+		
+		local slabLen = outerRadius - innerRadius + 4
+		local slabW = (outerRadius * math.tan(roofAngle/2)) * 2 + 2
+		
+		-- Slope upwards towards the center hole
+		local slabCenter = center + dir * (innerRadius + slabLen/2 - 2) + Vector3.new(0, height + (slabLen * math.sin(math.rad(20)))/2, 0)
+		
+		-- Controlled roof damage: a small number of slabs are missing
+		-- entirely (never adjacent to each other), reading as centuries of
+		-- deterioration rather than a random hole -- each becomes a
+		-- secondary sunlight shaft instead of leaving a structural gap.
+		local isBroken = (r % 5 == 2) and dRng:NextNumber() > 0.4
+		if isBroken then
+			buildSunlightShaft(decorFolder, "RoofBreakSun_"..r, slabCenter + Vector3.new(0, 3, 0), 6, 10)
+			addCollapsedMasonry(archFolder, "RoofBreakRubble_"..r, slabCenter - Vector3.new(0, height * 0.5, 0), 3, 2.5)
+		else
+			local slab = addOrientedPart(archFolder, "RoofSlab_"..r, Vector3.new(slabW, ceilThick, slabLen), slabCenter, -dir, CONFIG.materials.wall, CONFIG.colors.wallDark)
+			slab.CFrame = slab.CFrame * CFrame.Angles(math.rad(20), 0, 0)
+			-- Weathering: moss and hairline cracks on roughly half the intact slabs
+			if dRng:NextNumber() > 0.5 then
+				buildMossPatch(archFolder, "RoofMoss_"..r, slabCenter + Vector3.new(0, ceilThick/2 + 0.05, 0), dir, slabW * 0.4, slabLen * 0.35)
+			end
+			if dRng:NextNumber() > 0.75 then
+				buildVineStrip(archFolder, "RoofVine_"..r, slabCenter - dir * (slabLen/2 - 1), dRng:NextNumber(3, 7))
+			end
+		end
+	end
+
+	-- Heart Dais (stepped)
+	local function makeCylStep(name, r, h, y, mat, col)
+		local p = newPart({
+			Name = name,
+			Size = Vector3.new(h, r * 2, r * 2),
+			CFrame = CFrame.new(center + Vector3.new(0, y + h/2, 0)) * CFrame.Angles(0, 0, math.pi/2),
+			Shape = Enum.PartType.Cylinder,
+			Material = mat, Color = col, Parent = heartFolder
+		})
+		return p
+	end
+
+	makeCylStep("Step1", 10, 0.8, 0, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+	makeCylStep("Step2", 8, 0.8, 0.8, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+	makeCylStep("Step3", 6, 0.9, 1.6, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+	makeCylStep("Pedestal", 1.5, 0.6, 2.5, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+	-- Heart Crystal (Intricate Floating Assembly)
+	local corePos = center + Vector3.new(0, 9, 0)
+	local mainCrystal = newPart({
+		Name = "HeartCrystal",
+		Size = Vector3.new(2.5, 7, 2.5),
+		CFrame = CFrame.new(corePos) * CFrame.Angles(math.pi/8, math.pi/4, math.pi/8),
+		Material = CONFIG.materials.neon,
+		Color = CONFIG.colors.crystal,
+		Parent = heartFolder
+	})
+	
+	addGlow(mainCrystal, CONFIG.colors.crystalGlow, CONFIG.lighting.crystalRange, CONFIG.lighting.crystalBrightness)
+	addGlow(mainCrystal, CONFIG.colors.sacred, CONFIG.lighting.sacredRange, 1)
+
+	-- Orbiting shards
+	for f = 1, 6 do
+		local a = f * math.pi/3
+		local shardOffset = Vector3.new(math.sin(a)*3, math.sin(a*2)*1.5, math.cos(a)*3)
+		local shard = newPart({
+			Name = "Shard_" .. f,
+			Size = Vector3.new(0.8, 2.5, 0.8),
+			CFrame = CFrame.new(corePos + shardOffset) * CFrame.Angles(math.random(), math.random(), math.random()),
+			Material = CONFIG.materials.neon, Color = CONFIG.colors.crystal,
+			Parent = heartFolder
+		})
+	end
+	
+	-- Containment rings (ancient tech/magic)
+	local function buildRing(name, rCenter, ringRadius, thickness, tilt)
+		local ringModel = Instance.new("Model", heartFolder)
+		ringModel.Name = name
+		local segs = 16
+		local step = math.pi*2/segs
+		local len = 2 * ringRadius * math.tan(math.pi/segs)
+		for i=1, segs do
+			local a = i * step
+			local cf = tilt * CFrame.new(math.sin(a)*ringRadius, 0, math.cos(a)*ringRadius) * CFrame.Angles(0, a, 0)
+			newPart({
+				Name = "Seg_"..i, Size = Vector3.new(len + 0.2, thickness, thickness),
+				CFrame = cf, Material = CONFIG.materials.metal, Color = CONFIG.colors.metal,
+				Parent = ringModel
+			})
+		end
+	end
+	
+	buildRing("InnerRing", corePos, 4.5, 0.4, CFrame.new(corePos) * CFrame.Angles(math.rad(20), 0, 0))
+	buildRing("OuterRing", corePos, 6.0, 0.6, CFrame.new(corePos) * CFrame.Angles(math.rad(-15), math.rad(45), 0))
+
+	-- Water Pool (surrounding dais)
+	local poolY = -CONFIG.roomC.poolDepth + 0.1
+	local poolRadius = CONFIG.roomC.poolRadius
+	
+	local waterVol = newPart({
+		Name = "MainWater",
+		Size = Vector3.new(0.4, poolRadius*2, poolRadius*2),
+		CFrame = CFrame.new(center + Vector3.new(0, poolY, 0)) * CFrame.Angles(0, 0, math.pi/2),
+		Shape = Enum.PartType.Cylinder,
+		Material = CONFIG.materials.water,
+		Color = CONFIG.colors.waterShallow,
+		Transparency = 0.4,
+		CanCollide = false,
+		Parent = waterFolder
+	})
+	
+	-- Segmented stone border (outer ring)
+	local borderSegments = 24
+	local borderAngleStep = math.pi * 2 / borderSegments
+	local borderWidth = (poolRadius * 2 * math.pi) / borderSegments * 1.05
+	for b = 0, borderSegments - 1 do
+		local bAngle = b * borderAngleStep
+		local bOffset = Vector3.new(math.sin(bAngle), 0, math.cos(bAngle)) * poolRadius
+		local bPos = center + bOffset + Vector3.new(0, -0.2, 0)
+		
+		-- Don't place borders directly on the main entrance/exit path
+		local dToAxis = math.abs((bPos - center):Dot(right))
+		if dToAxis > 4 or (bPos - center).Magnitude < poolRadius - 1 then
+			local inward = (center - bPos).Unit
+			addOrientedPart(waterFolder, "PoolBorder_"..b, Vector3.new(borderWidth, 1.2, 1.5), bPos, inward, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+			
+			-- Add moss/ferns on the border
+			if dRng:NextNumber() > 0.4 then
+				buildMossPatch(decorFolder, "PoolMoss_"..b, bPos + Vector3.new(0, 0.6, 0), fwd, 2.5, 1.8)
+			end
+		end
+	end
+
+	-- Additional Decoration (magic motes, vines, moss)
+	for d = 1, 6 do
+		local angle = d * math.pi / 3
+		local mPos = center + Vector3.new(math.sin(angle)*4, 9 + 2 + math.sin(d)*1.5, math.cos(angle)*4)
+		newPart({
+			Name = "Mote_" .. d,
+			Size = Vector3.new(0.5, 0.5, 0.5),
+			CFrame = CFrame.new(mPos),
+			Shape = Enum.PartType.Ball,
+			Material = CONFIG.materials.neon, Color = CONFIG.colors.sacred,
+			Transparency = 0.3, CanCollide = false, Parent = decorFolder
+		})
+	end
+
+	buildSunlightShaft(decorFolder, "CentralSunlight", center + Vector3.new(0, height, 0), 16, height)
+	buildMossPatch(decorFolder, "DaisMoss1", center + Vector3.new(3, 1.6, 5), fwd, 4, 3)
+	buildMossPatch(decorFolder, "DaisMoss2", center + Vector3.new(-4, 0.8, -6), fwd, 5, 3)
+	
+	-- Markers
+	local exitPosition = center + fwd * radius
+	addCheckpoint(markersFolder, "RoomC_Start", entrancePosition)
+	addCheckpoint(markersFolder, "RoomC_Heart", corePos)
+	addCheckpoint(markersFolder, "RoomC_End", exitPosition)
+
+	-- Invisible narrative hooks
+	local function addHook(name, pos)
+		newPart({Name = name, Size = Vector3.new(1,1,1), CFrame = CFrame.new(pos), Transparency = 1, CanCollide = false, Parent = markersFolder})
+	end
+	addHook("RoomC_HeartModel", corePos)
+	addHook("RoomC_HeartPedestal", center + Vector3.new(0, 2.5, 0))
+	addHook("RoomC_HeartRevealPoint", center - fwd * 20)
+	addHook("RoomC_HeartInteractPoint", center - fwd * 8)
+	addHook("RoomC_ProctorPoint", center + right * 10)
+	addHook("RoomC_ProctorSpawn", center + right * 12)
+	addHook("RoomC_ExitGate", exitPosition)
+	addHook("RoomC_WizardExit", exitPosition + right * 6)
+	addHook("RoomC_ToRoomD", exitPosition + fwd * 4)
+
+	local colZone = newPart({
+		Name = "RoomC_CollapseZone", Size = Vector3.new(100, 50, 100),
+		CFrame = CFrame.new(center + Vector3.new(0, 10, 0)),
+		Transparency = 1, CanCollide = false, Parent = markersFolder
+	})
+	CollectionService:AddTag(colZone, "CollapseTrigger")
+
+	return folder, exitPosition
+end
+
+----------------------------------------------------------------------
+-- COLLAPSE TRANSITION C -> D
+----------------------------------------------------------------------
+
+local function buildCollapseTransition(root, startPosition, forward)
+	local folder = newFolder(root, "Transition_C_D_Collapse")
+	local geoFolder = newFolder(folder, "Geometry")
+	local debrisFolder = newFolder(folder, "Debris")
+	local decorFolder = newFolder(folder, "Decoration")
+	local markersFolder = newFolder(folder, "Markers")
+
+	local length = CONFIG.transitions.collapseLength
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+	
+	-- Broken, heavily slanted geometry
+	addOrientedPart(geoFolder, "Floor1",
+		Vector3.new(16, 1, length/2 + 2),
+		startPosition + fwd * (length/4) + Vector3.new(0, -0.5, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.floor)
+	
+	-- Drastic tilt for second half
+	local f2 = addOrientedPart(geoFolder, "Floor2",
+		Vector3.new(14, 2, length/2 + 2),
+		startPosition + fwd * (length*0.75) + Vector3.new(0, -4, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.floor)
+	f2.CFrame = f2.CFrame * CFrame.Angles(math.rad(-12), 0, math.rad(5))
+
+	-- Jagged walls
+	local wL = addOrientedPart(geoFolder, "WallL",
+		Vector3.new(2, 20, length),
+		startPosition + fwd * (length/2) - right * 8 + Vector3.new(0, 8, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+	wL.CFrame = wL.CFrame * CFrame.Angles(0, math.rad(5), math.rad(15))
+
+	local wR = addOrientedPart(geoFolder, "WallR",
+		Vector3.new(2, 20, length),
+		startPosition + fwd * (length/2) + right * 8 + Vector3.new(0, 8, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+	wR.CFrame = wR.CFrame * CFrame.Angles(0, math.rad(-5), math.rad(-12))
+
+	local ceil = addOrientedPart(geoFolder, "CeilPartial",
+		Vector3.new(16, 2, length*0.6),
+		startPosition + fwd * (length*0.3) + Vector3.new(0, 18, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.wallDark)
+	ceil.CFrame = ceil.CFrame * CFrame.Angles(math.rad(15), 0, math.rad(8))
+
+	-- Exposed Rock (ominous framing)
+	addOrientedPart(geoFolder, "ExposedRock_1", Vector3.new(10, 15, 10), startPosition + fwd * (length*0.6) - right * 12 + Vector3.new(0, 2, 0), fwd, Enum.Material.Slate, Color3.fromRGB(30, 30, 30))
+	addOrientedPart(geoFolder, "ExposedRock_2", Vector3.new(12, 25, 12), startPosition + fwd * (length*0.8) + right * 10 + Vector3.new(0, 5, 0), fwd, Enum.Material.Slate, Color3.fromRGB(25, 25, 25))
+
+	-- Ominous red/orange ambient lighting
+	local ominousLight = newPart({
+		Name = "OminousAmbient", Size = Vector3.new(1,1,1),
+		CFrame = CFrame.new(startPosition + fwd * (length*0.7) + Vector3.new(0, 5, 0)),
+		Transparency = 1, CanCollide = false, Parent = decorFolder
+	})
+	addGlow(ominousLight, Color3.fromRGB(200, 50, 20), 30, 1.5)
+
+	-- Debris -- positioned so damage reads as structurally caused: rubble
+	-- sits directly beneath the ceiling break and the fallen pillar's
+	-- stub, rather than being scattered independently of what broke above.
+	addBrokenSupport(debrisFolder, "FallenPillar", startPosition + fwd * (length*0.55) + right * 3, fwd, 16, 3)
+	addCollapsedMasonry(debrisFolder, "PillarBaseDebris", startPosition + fwd * (length*0.55) + right * 3, 5, 2.5)
+	addCollapsedMasonry(debrisFolder, "Rubble_1", startPosition + fwd * (length*0.3), 7, 3.5)
+	addCollapsedMasonry(debrisFolder, "Rubble_2", startPosition + fwd * (length*0.8) + right * 2, 8, 4)
+
+	-- Glowing stress cracks
+	for c = 1, 8 do
+		local crackPos = startPosition + fwd * (length * c/9) + right * ((c%2 == 0) and 4 or -4)
+		local p = newPart({
+			Name = "GlowingCrack_"..c, Size = Vector3.new(6, 0.3, 0.5),
+			CFrame = CFrame.new(crackPos) * CFrame.Angles(0, math.rad(math.random(-60, 60)), 0),
+			Material = CONFIG.materials.neon, Color = CONFIG.colors.crack,
+			CanCollide = false, Parent = debrisFolder
+		})
+		addGlow(p, CONFIG.colors.crack, 10, 2)
+	end
+
+	local exitPos = startPosition + fwd * length + Vector3.new(0, -6, 0) -- Drop down slightly at exit
+
+	-- Markers
+	local function addHook(name, pos)
+		newPart({Name = name, Size = Vector3.new(1,1,1), CFrame = CFrame.new(pos), Transparency = 1, CanCollide = false, Parent = markersFolder})
+	end
+	
+	addHook("RoomC_CollapseDebris", startPosition + fwd * 8)
+	addHook("Transition_C_D_WizardPoint", startPosition + fwd * 5)
+	addHook("Transition_C_D_WizardRoute_1", startPosition + fwd * 15)
+	addHook("Transition_C_D_WizardRoute_2", startPosition + fwd * 25)
+	addHook("Transition_C_D_ExitTrigger", exitPos)
+	addHook("Transition_C_D_MysteriousWarriorPoint", exitPos + fwd * 5)
+	addHook("Transition_C_D_WarriorReveal", exitPos + fwd * 10)
+
+	return folder, exitPos
+end
+
+----------------------------------------------------------------------
+-- ROOM D: ASCENT OF ECHOES
+----------------------------------------------------------------------
+
+local function buildRoomD(root, entrancePosition, forward)
+	local folder = newFolder(root, "RoomD_AscentOfEchoes")
+	local approachFolder = newFolder(folder, "Approach")
+	local shaftFolder = newFolder(folder, "Shaft")
+	local ascentFolder = newFolder(folder, "Ascent")
+	local warriorsFolder = newFolder(folder, "Warriors")
+	local muralsFolder = newFolder(folder, "Murals")
+	local hazardsFolder = newFolder(folder, "Hazards")
+	local echoesFolder = newFolder(folder, "Echoes")
+	local decorFolder = newFolder(folder, "Decoration")
+	local markersFolder = newFolder(folder, "Markers")
+
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+	local conf = CONFIG.roomD
+	local roomDRng = Random.new(conf.seed)
+
+	----------------------------------------------------------------
+	-- SECTION 0: RUINED APPROACH -- horizontal depth before the shaft.
+	-- This is what keeps Room D from being "Room C -> tiny room -> climb".
+	----------------------------------------------------------------
+	local aLen = conf.approachLength
+	local aWidth = conf.approachWidth
+	local aHeight = conf.approachHeight
+	local aCenter = entrancePosition + fwd * (aLen / 2)
+
+	addOrientedPart(approachFolder, "ApproachFloor", Vector3.new(aWidth, 1, aLen), aCenter + Vector3.new(0, -0.5, 0), fwd, CONFIG.materials.floor, CONFIG.colors.floor)
+	addOrientedPart(approachFolder, "ApproachWallL", Vector3.new(conf.wallThickness, aHeight, aLen), aCenter - right * (aWidth/2 + conf.wallThickness/2) + Vector3.new(0, aHeight/2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+	addOrientedPart(approachFolder, "ApproachWallR", Vector3.new(conf.wallThickness, aHeight, aLen), aCenter + right * (aWidth/2 + conf.wallThickness/2) + Vector3.new(0, aHeight/2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+
+	local approachSegs = 5
+	local segLen = aLen / approachSegs
+	for i = 0, approachSegs - 1 do
+		local segCenter = entrancePosition + fwd * (i * segLen + segLen / 2)
+		if roomDRng:NextNumber() > 0.45 then
+			addOrientedPart(approachFolder, "ApproachCeil_" .. i, Vector3.new(aWidth, 1, segLen), segCenter + Vector3.new(0, aHeight + 0.5, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wallDark)
+		else
+			buildSunlightShaft(decorFolder, "ApproachSun_" .. i, segCenter + Vector3.new(0, aHeight, 0), 8, aHeight)
+		end
+		if roomDRng:NextNumber() > 0.5 then
+			buildAlgaeCluster(decorFolder, "ApproachAlgae_" .. i, segCenter - right * (aWidth/2 - 1), fwd, roomDRng, CONFIG.vegetation.density.roomD * 0.6)
+		end
+	end
+	addCrackedFloorPatch(approachFolder, "ApproachCrack_1", entrancePosition + fwd * (aLen * 0.4), fwd, 6, 5)
+	addCollapsedMasonry(approachFolder, "ApproachRubble_1", entrancePosition + fwd * (aLen * 0.7) + right * (aWidth/2 - 2), 5, 2.5)
+
+	-- One quiet, early fallen warrior: the first sign something went wrong here (Doubt phase begins)
+	buildFallenWarrior(warriorsFolder, "Warrior_00", entrancePosition + fwd * (aLen * 0.6) - right * (aWidth/2 - 3), fwd, "collapsed", roomDRng)
+
+	addCheckpoint(markersFolder, "RoomD_Start", entrancePosition)
+
+	----------------------------------------------------------------
+	-- THE SHAFT: bounded vertical chasm the ascent climbs through
+	----------------------------------------------------------------
+	local shaftBase = entrancePosition + fwd * aLen
+	local shaftWidth = conf.shaftWidth
+	local shaftHalf = shaftWidth / 2
+
+	-- Precompute every leg's height/forward gain up front so the boundary
+	-- walls and fog can be sized to the real total extent.
+	local legHeights, legForwards = {}, {}
+	local totalForward, totalHeight = 0, 0
+	for L = 1, conf.legCount do
+		local hGain = roomDRng:NextNumber(conf.legHeightMin, conf.legHeightMax)
+		local fGain = conf.legForwardAdvance * (0.7 + 0.6 * roomDRng:NextNumber())
+		legHeights[L] = hGain
+		legForwards[L] = fGain
+		totalHeight = totalHeight + hGain
+		totalForward = totalForward + fGain
+	end
+	totalForward = totalForward + conf.finalStairLength
+	totalHeight = totalHeight + conf.finalStairHeight
+
+	local shaftDepthSpan = totalForward + 10
+	local shaftCenterFwd = shaftBase + fwd * (shaftDepthSpan / 2)
+
+	addOrientedPart(shaftFolder, "ShaftWallL", Vector3.new(conf.wallThickness, totalHeight + 30, shaftDepthSpan), shaftCenterFwd - right * (shaftHalf + conf.wallThickness/2) + Vector3.new(0, (totalHeight + 30)/2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+	addOrientedPart(shaftFolder, "ShaftWallR", Vector3.new(conf.wallThickness, totalHeight + 30, shaftDepthSpan), shaftCenterFwd + right * (shaftHalf + conf.wallThickness/2) + Vector3.new(0, (totalHeight + 30)/2, 0), fwd, CONFIG.materials.wall, CONFIG.colors.wall)
+
+	-- Deep chasm below the entry point -- fog swallows the true bottom
+	newPart({
+		Name = "ChasmFog", Size = Vector3.new(shaftWidth, 30, shaftDepthSpan),
+		CFrame = CFrame.new(shaftCenterFwd + Vector3.new(0, -40, 0)),
+		Material = Enum.Material.Neon, Color = CONFIG.colors.fog,
+		Transparency = 0.75, CanCollide = false, CanQuery = false, Parent = decorFolder
+	})
+
+	-- Vertical wall growth AND architectural rhythm running the height of
+	-- the shaft: massive corner-style pilasters, horizontal ledge bands,
+	-- and recessed statue niches at intervals -- per the brief, the shaft
+	-- walls must NOT read as "four flat walls around a giant empty box."
+	local wallDecoCount = math.floor(totalHeight / 14)
+	for i = 1, wallDecoCount do
+		local yFrac = i / (wallDecoCount + 1)
+		local wY = yFrac * totalHeight
+		local wF = yFrac * totalForward
+		local side = (i % 2 == 0) and 1 or -1
+		local wPos = shaftBase + fwd * wF + right * (side * shaftHalf) + Vector3.new(0, wY, 0)
+		local wallOutward = -right * side -- points from the shaft wall INTO the shaft interior
+
+		buildAlgaeCluster(decorFolder, "ShaftAlgae_" .. i, wPos - right * (side * 1.5), fwd, roomDRng, CONFIG.vegetation.density.roomD)
+		if roomDRng:NextNumber() > 0.6 then
+			buildVineStrip(decorFolder, "ShaftVine_" .. i, wPos + Vector3.new(0, 4, 0), roomDRng:NextNumber(6, 14))
+		end
+
+		-- Horizontal ledge band -- a stone course breaking the shaft's
+		-- height into readable storeys, per the brief's "horizontal ledge
+		-- bands" requirement
+		addOrientedPart(decorFolder, "ShaftLedgeBand_" .. i, Vector3.new(2.5, 0.5, 10), wPos, fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+		-- Every third band gets a full recessed statue niche -- "many
+		-- warriors attempted this trial before", architecturally
+		-- integrated (statue + pedestal + niche + frame) rather than a
+		-- statue floating against the wall
+		if i % 3 == 0 then
+			buildWallNiche(decorFolder, "ShaftNiche_" .. i, wPos + Vector3.new(0, -2, 0), wallOutward, 5, 9, CONFIG.materials.wall, CONFIG.colors.ancientStone, true, roomDRng)
+		else
+			addPilaster(decorFolder, "ShaftPilaster_" .. i, wPos - Vector3.new(0, 6, 0), fwd, 12, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+		end
+	end
+
+	----------------------------------------------------------------
+	-- ASCENT LEGS (Sections 1-6): a real switchback climb, not a
+	-- straight elevator shaft and not a floating-pillar arena.
+	----------------------------------------------------------------
+	local LEG_NAMES = {"ShatteredStairs", "BrokenPlatforms", "ShiftingPlatforms", "CrumblingBridge", "ChainAscent", "VerticalPillars"}
+	local waypoints = {}
+	waypoints[0] = shaftBase + Vector3.new(0, 2, 0)
+	addOrientedPart(shaftFolder, "ShaftEntryLanding", Vector3.new(conf.landingSize + 4, 1.2, conf.landingSize + 4), waypoints[0] - Vector3.new(0, 0.6, 0), fwd, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+
+	local chainIndex, shiftIndex, warriorIndex, muralIndex = 0, 0, 0, 0
+	local cumFwd, cumY = 0, 0
+
+	for L = 1, conf.legCount do
+		local legName = LEG_NAMES[L] or ("Leg" .. L)
+		local legFolder = newFolder(ascentFolder, "Section_" .. L .. "_" .. legName)
+
+		local hGain = legHeights[L]
+		local fGain = legForwards[L]
+		cumFwd = cumFwd + fGain
+		cumY = cumY + hGain
+
+		local sign = (L % 2 == 0) and 1 or -1
+		local swing = conf.lateralSwing * (0.55 + 0.45 * roomDRng:NextNumber())
+		local maxLateral = shaftHalf - conf.landingSize/2 - 3
+		local lateralX = sign * math.min(swing, maxLateral)
+
+		local startWp = waypoints[L - 1]
+		local endWp = shaftBase + fwd * cumFwd + right * lateralX + Vector3.new(0, cumY + 2, 0)
+		waypoints[L] = endWp
+
+		local phase = (L <= 2) and "Doubt" or ((L <= 4) and "Desperation" or "Anger")
+		local densityScale = (phase == "Doubt") and 0.6 or ((phase == "Desperation") and 1.0 or 1.5)
+
+		if L == 1 then
+			-- SECTION 1: Shattered Staircases
+			buildShatteredStaircase(legFolder, "Stair", startWp, endWp, fwd, conf.landingSize * 0.8, roomDRng)
+
+		elseif L == 2 then
+			-- SECTION 2: Broken Platforms -- wall ledges linked by short broken bridges
+			local mid1 = startWp:Lerp(endWp, 0.35) + right * (-sign * 6)
+			local mid2 = startWp:Lerp(endWp, 0.7) + right * (sign * 4)
+			buildWallLedgePlatform(legFolder, "Ledge_A", mid1, fwd, conf.landingSize * 0.75, conf.landingSize * 0.75, true, roomDRng)
+			buildWallLedgePlatform(legFolder, "Ledge_B", mid2, fwd, conf.landingSize * 0.75, conf.landingSize * 0.75, true, roomDRng)
+			buildBrokenBridge(legFolder, "Bridge_Approach", startWp, mid1, fwd, 6, false)
+			buildBrokenBridge(legFolder, "Bridge_Exit", mid2, endWp, fwd, 6, false)
+			buildChainSegment(legFolder, "SupportChain_A", mid1 + Vector3.new(0, 8, 0), mid1 + Vector3.new(0, 2, 0), 5)
+
+		elseif L == 3 then
+			-- SECTION 3: Shifting Platforms -- real static geometry now, named + tagged for future movement scripting
+			local steps = 3
+			for i = 1, steps do
+				shiftIndex = shiftIndex + 1
+				local wp = startWp:Lerp(endWp, i / (steps + 1))
+				local jitter = right * (sign * ((i % 2 == 0) and -5 or 5))
+				local plat = buildParkourPlatform(legFolder, string.format("RoomD_ShiftingPlatform_%02d", shiftIndex), wp + jitter, fwd, conf.landingSize * 0.7, conf.landingSize * 0.7, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+				plat:SetAttribute("Kind", "ShiftingPlatform")
+				plat:SetAttribute("PatrolAxis", "Right")
+				plat:SetAttribute("PatrolDistance", 10)
+				CollectionService:AddTag(plat, "ShiftingPlatform")
+			end
+
+		elseif L == 4 then
+			-- SECTION 4: Crumbling Bridge -- one long broken span across the chasm, then a short climb
+			local bridgeEnd = startWp + fwd * (fGain * 0.6) + right * (lateralX * 0.6)
+			buildBrokenBridge(legFolder, "MainCrumblingBridge", startWp, bridgeEnd, fwd, 8, false)
+			addCollapsedMasonry(legFolder, "BridgeDebris", bridgeEnd, 6, 3)
+			buildShatteredStaircase(legFolder, "PostBridgeStair", bridgeEnd, endWp, fwd, conf.landingSize * 0.7, roomDRng)
+
+		elseif L == 5 then
+			-- SECTION 5: Chain Ascent -- a genuine vertical climb between two aligned ledges
+			local chainBase = startWp + right * (lateralX * 0.3)
+			local chainTop = Vector3.new(chainBase.X, endWp.Y, chainBase.Z)
+			buildWallLedgePlatform(legFolder, "ChainBaseLedge", chainBase, fwd, conf.landingSize * 0.7, conf.landingSize * 0.7, false, roomDRng)
+			local chainCount = 3
+			for c = 1, chainCount do
+				chainIndex = chainIndex + 1
+				local cOff = right * ((c - (chainCount + 1) / 2) * 3)
+				local chain = buildChainSegment(hazardsFolder, string.format("RoomD_Chain_%02d", chainIndex), chainTop + cOff + Vector3.new(0, -2, 0), chainBase + cOff + Vector3.new(0, 3, 0), 14)
+				CollectionService:AddTag(chain, "ChainClimb")
+			end
+			buildWallLedgePlatform(legFolder, "RestLedge", chainBase:Lerp(chainTop, 0.5) + right * 5, fwd, conf.landingSize * 0.5, conf.landingSize * 0.5, true, roomDRng)
+			buildBrokenBridge(legFolder, "ChainTopLink", chainTop, endWp, fwd, 6, true)
+
+		elseif L == 6 then
+			-- SECTION 6: Vertical Pillars / Ruined Architecture -- climb via broken pillar-top ledges
+			local pillarSteps = 4
+			local prev = startWp
+			for i = 1, pillarSteps do
+				local wp = startWp:Lerp(endWp, i / pillarSteps)
+				local pOff = right * (sign * (2 + i))
+				buildStonePillar(legFolder, "RuinPillar_" .. i, wp - Vector3.new(0, 12, 0) + pOff, 12, 2.4, CONFIG.materials.wall, CONFIG.colors.ancientStone, false)
+				buildWallLedgePlatform(legFolder, "PillarLedge_" .. i, wp + pOff, fwd, conf.landingSize * 0.65, conf.landingSize * 0.65, (i % 2 == 0), roomDRng)
+				buildBrokenBridge(legFolder, "PillarLink_" .. i, prev, wp + pOff, fwd, 5, i == 1)
+				prev = wp + pOff
+			end
+			buildBrokenBridge(legFolder, "FinalPillarLink", prev, endWp, fwd, 6, false)
+		end
+
+		-- Landing platform at the end of every leg: always solid, always a safe checkpoint
+		buildWallLedgePlatform(legFolder, "Landing_" .. L, endWp, fwd, conf.landingSize, conf.landingSize, false, roomDRng)
+		addCheckpoint(markersFolder, string.format("RoomD_Checkpoint_%02d", L), endWp)
+
+		-- Environmental storytelling scaled to the psychological phase (Doubt -> Desperation -> Anger)
+		local warriorsThisLeg = (phase == "Doubt") and 1 or ((phase == "Desperation") and 2 or 3)
+		for w = 1, warriorsThisLeg do
+			warriorIndex = warriorIndex + 1
+			local wp = startWp:Lerp(endWp, w / (warriorsThisLeg + 1)) + right * (-sign * roomDRng:NextNumber(4, 8))
+			buildFallenWarrior(warriorsFolder, "Warrior_" .. warriorIndex, wp, fwd, nil, roomDRng)
+		end
+
+		if L >= 3 and muralIndex < conf.muralCount then
+			muralIndex = muralIndex + 1
+			local mSide = (L % 2 == 0) and -right or right
+			local muralSize = 14 + muralIndex * 2
+			buildDragonMural(muralsFolder, "Mural_" .. muralIndex, endWp + mSide * (shaftHalf - 1) - fwd * 4, -mSide, muralSize, muralSize * 0.55)
+		end
+
+		if L % 2 == 1 then
+			buildSunlightShaft(decorFolder, "ShaftSun_" .. L, endWp + Vector3.new(0, 14, 0), 10 + L * 1.5, 16 + L * 2)
+		end
+
+		if roomDRng:NextNumber() < densityScale * 0.5 then
+			addCollapsedMasonry(legFolder, "PhaseRubble_" .. L, endWp + right * (sign * 5), 5, 3)
+		end
+	end
+
+	----------------------------------------------------------------
+	-- SECTION 8: FINAL SUMMIT APPROACH -- the most intact stretch;
+	-- structurally, the trial is almost over.
+	----------------------------------------------------------------
+	local lastWp = waypoints[conf.legCount]
+	local finalTop = lastWp + fwd * conf.finalStairLength + Vector3.new(0, conf.finalStairHeight, 0)
+	local finalStairFolder = newFolder(ascentFolder, "Section_8_FinalApproach")
+	buildShatteredStaircase(finalStairFolder, "FinalStair", lastWp, finalTop, fwd, conf.landingSize, roomDRng)
+	buildAncientArch(finalStairFolder, "SummitThreshold", finalTop - fwd * 2, fwd, conf.landingSize, 18, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	buildSunlightShaft(decorFolder, "FinalSun", finalTop + Vector3.new(0, 20, 0), 20, 30)
+	buildStatue(finalStairFolder, "GuardianRemnant_L", finalTop - right * (conf.landingSize/2 + 2), fwd, 9, "guarding")
+	buildStatue(finalStairFolder, "GuardianRemnant_R", finalTop + right * (conf.landingSize/2 + 2), fwd, 9, "guarding")
+
+	----------------------------------------------------------------
+	-- WARRIOR ECHO TRIGGERS -- positioned on the real ascent path
+	----------------------------------------------------------------
+	local echoStages = {"Doubt", "Desperation", "Anger", "Silence"}
+	local echoWaypointIdx = {2, 4, 6, conf.legCount}
+	for i = 1, #echoStages do
+		local idx = math.min(echoWaypointIdx[i], conf.legCount)
+		local ePos = waypoints[idx]
+		local echo = Instance.new("Model")
+		echo.Name = "RoomD_Echo_" .. i
+		echo.Parent = echoesFolder
+
+		newPart({
+			Name = "EchoTrigger", Size = Vector3.new(shaftWidth, 20, 20),
+			CFrame = CFrame.new(ePos), Transparency = 1, CanCollide = false, CanQuery = true, Parent = echo
+		})
+		echo:SetAttribute("EchoStage", echoStages[i])
+		echo:SetAttribute("EchoIndex", i)
+		CollectionService:AddTag(echo, "WarriorEcho")
+	end
+
+	----------------------------------------------------------------
+	-- MARKERS
+	----------------------------------------------------------------
+	addCheckpoint(markersFolder, "RoomD_Mid", waypoints[3])
+	addCheckpoint(markersFolder, "RoomD_End", finalTop)
+
+	return folder, finalTop
+end
+
+----------------------------------------------------------------------
+-- SUMMIT + MAIN GENERATOR
+----------------------------------------------------------------------
+
+local function buildSummit(root, basePosition, forward)
+	local folder = newFolder(root, "Summit")
+	local geoFolder = newFolder(folder, "Geometry")
+	local ruinsFolder = newFolder(folder, "Ruins")
+	local cineFolder = newFolder(folder, "CinematicMarkers")
+
+	local fwd = unitXZ(forward)
+	local right = getRight(fwd)
+	local center = basePosition + fwd * (CONFIG.summit.depth / 2)
+	local dRng = Random.new(20260902)
+
+	-- Stepped monumental platform
+	addOrientedPart(geoFolder, "SummitFloor_Step1",
+		Vector3.new(CONFIG.summit.width, 1, CONFIG.summit.depth),
+		center + Vector3.new(0, -0.5, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+		
+	addOrientedPart(geoFolder, "SummitFloor_Step2",
+		Vector3.new(CONFIG.summit.width - 6, 1, CONFIG.summit.depth - 6),
+		center + Vector3.new(0, 0.5, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.ancientStone)
+		
+	addOrientedPart(geoFolder, "SummitFloor_Step3",
+		Vector3.new(CONFIG.summit.width - 12, 1, CONFIG.summit.depth - 12),
+		center + Vector3.new(0, 1.5, 0),
+		fwd, CONFIG.materials.floor, CONFIG.colors.wall)
+
+	-- Colossal statues framing the exit
+	local exitPos = center + fwd * (CONFIG.summit.depth/2 - 4)
+	buildStatue(geoFolder, "GuardianStatue_L", exitPos - right * 14 + Vector3.new(0, 1.5, 0), fwd, 15, "standing")
+	buildStatue(geoFolder, "GuardianStatue_R", exitPos + right * 14 + Vector3.new(0, 1.5, 0), fwd, 15, "standing")
+
+	-- Exit Arch (Monumental)
+	buildAncientArch(geoFolder, "ExitArch_Main", exitPos + Vector3.new(0, 1.5, 0), fwd, 20, 25, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	buildAncientArch(geoFolder, "ExitArch_Inner", exitPos + fwd * 2 + Vector3.new(0, 1.5, 0), fwd, 16, 20, CONFIG.materials.wall, CONFIG.colors.wallDark)
+
+	-- Low broken walls around edges
+	local h = CONFIG.summit.wallHeight
+	addOrientedPart(geoFolder, "WallL",
+		Vector3.new(2, h, CONFIG.summit.depth * 0.8),
+		center - right * (CONFIG.summit.width/2 - 1) + Vector3.new(0, h/2, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	addOrientedPart(geoFolder, "WallR",
+		Vector3.new(2, h, CONFIG.summit.depth * 0.8),
+		center + right * (CONFIG.summit.width/2 - 1) + Vector3.new(0, h/2, 0),
+		fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+
+	-- Ruins and debris
+	for r = 1, 6 do
+		local rPos = center + right * ((r%2==0) and 18 or -18) + fwd * ((dRng:NextNumber()-0.5)*30)
+		buildStonePillar(ruinsFolder, "BrokenPillar_"..r, rPos, 12 + dRng:NextNumber()*10, 3, CONFIG.materials.wall, CONFIG.colors.ancientStone, true)
+	end
+	addCollapsedMasonry(ruinsFolder, "Rubble_1", center - right*20, 10, 6)
+	addCollapsedMasonry(ruinsFolder, "Rubble_2", center + right*20 + fwd*10, 8, 5)
+
+	-- Central altar/pedestal -- the trial's reward focal point: open,
+	-- deliberate, calm. This is the visual contrast against Room D's
+	-- density that the brief specifically asks for.
+	local altarPos = center - fwd * 6
+	addOrientedPart(geoFolder, "AltarBase", Vector3.new(6, 1.2, 6), altarPos + Vector3.new(0, 0.6, 0), fwd, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	addOrientedPart(geoFolder, "AltarTop", Vector3.new(3.5, 0.6, 3.5), altarPos + Vector3.new(0, 1.5, 0), fwd, CONFIG.materials.trim, CONFIG.colors.trim)
+	local altarGlow = newPart({Name = "AltarGlow", Size = Vector3.new(1,1,1), CFrame = CFrame.new(altarPos + Vector3.new(0, 2.2, 0)), Transparency = 1, CanCollide = false, Parent = geoFolder})
+	addGlow(altarGlow, CONFIG.colors.sacred, 14, 1.2)
+
+	-- Sparse vegetation -- wind-swept summit, deliberately NOT as lush as
+	-- the sanctuary
+	for v = 1, 4 do
+		local vAngle = dRng:NextNumber(0, math.pi*2)
+		local vPos = center + Vector3.new(math.sin(vAngle), 0, math.cos(vAngle)) * dRng:NextNumber(10, 22)
+		buildAlgaeCluster(geoFolder, "SummitGrowth_" .. v, vPos, fwd, dRng, 0.4)
+	end
+
+	-- Cinematic lighting
+	buildSunlightShaft(geoFolder, "SummitSun", center + Vector3.new(0, 40, 0), 20, 40)
+
+	-- Cinematic Markers
+	local function addCine(name, pos)
+		newPart({Name = name, Size = Vector3.new(1,1,1), CFrame = CFrame.new(pos), Transparency = 1, CanCollide = false, Parent = cineFolder})
+	end
+
+	addCine("RoomD_Summit", center)
+	addCine("RoomD_FinalView", center - fwd * (CONFIG.summit.depth/2 - 2))
+	addCine("RoomD_AcademyView", center + fwd * (CONFIG.summit.depth/2 - 2))
+	addCine("RoomD_DragonRevealPoint", center + fwd * 30 + Vector3.new(0, 40, 0))
+	addCine("RoomD_VisionPoint", center)
+	addCine("RoomD_ProctorFinalDialoguePoint", center + right * 8)
+	addCine("TrialChamber_Exit", exitPos)
+
+	addCheckpoint(cineFolder, "TrialChamber_Exit_Check", exitPos)
+
+	return folder
+end
+
+local function generateTrialChamber()
+	local existing = workspace:FindFirstChild("TrialChamberV2")
+	if existing then
+		existing:Destroy()
+	end
+	
+	local root = Instance.new("Model")
+	root.Name = "TrialChamberV2"
+	
+	local origin = CONFIG.layout.origin
+	local forward = unitXZ(CONFIG.layout.progressionAxis)
+	local right = getRight(forward)
+	local cursor = origin
+	
+	print("=== Trial Chamber V2: Linear Progression ===")
+	print("Origin:", origin)
+	
+	-- START
+	local startFolder = newFolder(root, "Start")
+	buildAncientArch(startFolder, "EntranceArch", cursor, forward, CONFIG.transitions.corridorWidth, CONFIG.transitions.corridorHeight, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	addCheckpoint(startFolder, "TrialChamber_Start", cursor)
+	
+	local _, startExitPos = buildStandardTransition(root, "Entrance_Corridor", cursor, forward)
+	cursor = startExitPos + forward * CONFIG.layout.roomGap
+	
+	-- ROOM A
+	print("Building Room A: Trap Corridor...")
+	local roomAFolder, roomAExit = buildRoomA(root, cursor, forward)
+	cursor = roomAExit
+	
+	-- TRANSITION A -> B
+	cursor = cursor + Vector3.new(0, CONFIG.layout.verticalStep, 0)
+	local transFolderAB = newFolder(root, "Transition_A_B")
+	-- Massive ancient gate leading to the courtyard -- this announces
+	-- "the first trial is complete", so it gets real mechanical weight:
+	-- a working-looking portcullis between two monumental arches.
+	buildAncientArch(transFolderAB, "Gate_A_B_Outer", cursor + forward * 2, forward, 22, 24, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	buildAncientArch(transFolderAB, "Gate_A_B_Inner", cursor + forward * 4, forward, 18, 20, CONFIG.materials.wall, CONFIG.colors.wallDark)
+	buildPortcullisDoor(transFolderAB, "Gate_A_B_Portcullis", cursor + forward * 6, forward, 16, 18)
+	buildDoorFrame(transFolderAB, "Gate_A_B_Frame", cursor + forward * 8, forward, 16, 18, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	buildBanner(transFolderAB, "Gate_A_B_BannerL", cursor + forward * 2 - right * 13 + Vector3.new(0, 22, 0), forward, 9, 3)
+	buildBanner(transFolderAB, "Gate_A_B_BannerR", cursor + forward * 2 + right * 13 + Vector3.new(0, 22, 0), forward, 9, 3)
+	buildAlgaeCluster(transFolderAB, "Gate_A_B_Algae_L", cursor + forward * 2 - right * 11, forward, random, 1.0)
+	buildAlgaeCluster(transFolderAB, "Gate_A_B_Algae_R", cursor + forward * 2 + right * 11, forward, random, 1.0)
+	
+	local _, transABExit = buildStandardTransition(transFolderAB, "Corridor", cursor, forward)
+	cursor = transABExit + forward * CONFIG.layout.roomGap
+	
+	-- ROOM B
+	print("Building Room B: Combat Courtyard...")
+	local roomBFolder, roomBExit = buildRoomB(root, cursor, forward)
+	cursor = roomBExit
+	
+	-- TRANSITION B -> C
+	cursor = cursor + Vector3.new(0, CONFIG.layout.verticalStep, 0)
+	local transFolderBC = newFolder(root, "Transition_B_C")
+	-- Sacred Sanctuary Gate -- deliberately NOT barred like the A->B gate;
+	-- this one should feel inviting and mysterious, not mechanical.
+	buildAncientArch(transFolderBC, "Gate_B_C_Sacred", cursor + forward * 2, forward, 14, 18, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	addPilaster(transFolderBC, "SacredPillarL", cursor + forward * 2 - right * 9, forward, 20, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	addPilaster(transFolderBC, "SacredPillarR", cursor + forward * 2 + right * 9, forward, 20, CONFIG.materials.wall, CONFIG.colors.ancientStone)
+	buildBanner(transFolderBC, "Gate_B_C_BannerL", cursor + forward * 2 - right * 9 + Vector3.new(0, 19, 0), forward, 7, 2.5)
+	buildBanner(transFolderBC, "Gate_B_C_BannerR", cursor + forward * 2 + right * 9 + Vector3.new(0, 19, 0), forward, 7, 2.5)
+	buildAlgaeCluster(transFolderBC, "Gate_B_C_Algae_L", cursor + forward * 2 - right * 8, forward, random, 1.4)
+	buildAlgaeCluster(transFolderBC, "Gate_B_C_Algae_R", cursor + forward * 2 + right * 8, forward, random, 1.4)
+	do
+		local motePos = cursor + forward * 2 + Vector3.new(0, 12, 0)
+		local mote = newPart({Name = "Gate_B_C_SacredGlow", Size = Vector3.new(1,1,1), CFrame = CFrame.new(motePos), Transparency = 1, CanCollide = false, Parent = transFolderBC})
+		addGlow(mote, CONFIG.colors.sacred, 16, 1.2)
+	end
+	
+	local _, transBCExit = buildStandardTransition(transFolderBC, "Corridor", cursor, forward)
+	cursor = transBCExit + forward * CONFIG.layout.roomGap
+	
+	-- ROOM C
+	print("Building Room C: Oasis Sanctuary...")
+	local roomCFolder, roomCExit = buildRoomC(root, cursor, forward)
+	cursor = roomCExit
+	
+	-- COLLAPSE TRANSITION C -> D
+	cursor = cursor + Vector3.new(0, CONFIG.layout.verticalStep, 0)
+	local _, collapseExit = buildCollapseTransition(root, cursor, forward)
+	cursor = collapseExit + forward * CONFIG.layout.roomGap
+	
+	-- ROOM D
+	print("Building Room D: Ascent of Echoes...")
+	local roomDFolder, roomDEnd = buildRoomD(root, cursor, forward)
+	
+	-- SUMMIT
+	print("Building Summit...")
+	buildSummit(root, roomDEnd, forward)
+	
+	-- Count parts
+	local partCount = 0
+	for _, desc in ipairs(root:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			partCount = partCount + 1
+		end
+	end
+	
+	root.Parent = workspace
+	
+	print("=== Trial Chamber V2 Complete ===")
+	print("Total parts:", partCount)
+	print("Structure: START -> A -> B -> C -> D -> SUMMIT -> EXIT")
+end
+
+generateTrialChamber()
