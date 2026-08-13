@@ -1,1 +1,2 @@
-All the updates with the Trial Chamber are dealt over here 
+All the updates/changes that are made to the Trial Chamber are dealt over here ....
+
