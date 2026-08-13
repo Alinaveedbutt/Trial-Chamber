@@ -1108,7 +1108,7 @@ local function buildBarredGate(parent, name, floorPosition, forward, width, heig
     return model
 end
 
-local function buildSpikeTrap(parent, name, floorPosition, forward)
+local function buildSpikeTrap(parent, name, floorPosition, forward, skipTravelGuides)
     -- Ported from the Room A reference draft: full mechanical detail --
     -- stone housing rings, carved corner stones, a geared medallion,
     -- guide rails, coiled springs, and genuinely tapering segmented
@@ -1216,18 +1216,23 @@ local function buildSpikeTrap(parent, name, floorPosition, forward)
         end
     end
 
-    local railHeight = t.pitDepth + t.extendOffsetY + 0.6
+    -- Guide rails span the mechanism's vertical travel distance -- only
+    -- meaningful (and only kept short enough to look right) on a floor
+    -- trap. Rotated variants skip them; see skipTravelGuides above.
     local railInset = 0.55
-    local railCorners = {
-        floorPosition - right*(t.width/2 - railInset) - fwd*(t.depth/2 - railInset),
-        floorPosition + right*(t.width/2 - railInset) - fwd*(t.depth/2 - railInset),
-        floorPosition - right*(t.width/2 - railInset) + fwd*(t.depth/2 - railInset),
-        floorPosition + right*(t.width/2 - railInset) + fwd*(t.depth/2 - railInset),
-    }
-    for index, cornerPos in ipairs(railCorners) do
-        newPart({Name="GuideRail_"..index, Shape=Enum.PartType.Cylinder, Size=Vector3.new(railHeight, 0.22, 0.22),
-            CFrame=CFrame.new(cornerPos + Vector3.new(0, railHeight/2 - t.pitDepth, 0)) * CFrame.Angles(0, 0, math.rad(90)),
-            Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+    if not skipTravelGuides then
+        local railHeight = t.pitDepth + t.extendOffsetY + 0.6
+        local railCorners = {
+            floorPosition - right*(t.width/2 - railInset) - fwd*(t.depth/2 - railInset),
+            floorPosition + right*(t.width/2 - railInset) - fwd*(t.depth/2 - railInset),
+            floorPosition - right*(t.width/2 - railInset) + fwd*(t.depth/2 - railInset),
+            floorPosition + right*(t.width/2 - railInset) + fwd*(t.depth/2 - railInset),
+        }
+        for index, cornerPos in ipairs(railCorners) do
+            newPart({Name="GuideRail_"..index, Shape=Enum.PartType.Cylinder, Size=Vector3.new(railHeight, 0.22, 0.22),
+                CFrame=CFrame.new(cornerPos + Vector3.new(0, railHeight/2 - t.pitDepth, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+                Material=CONFIG.materials.metal, Color=CONFIG.colors.metal, Parent=trap})
+        end
     end
 
     local springInset = railInset + 0.85
@@ -1246,10 +1251,15 @@ local function buildSpikeTrap(parent, name, floorPosition, forward)
         end
     end
 
-    local supportY = -t.pitDepth - 0.05
-    local diagLength = math.sqrt(t.width^2 + t.depth^2) * 0.88
-    addOrientedPart(trap, "SupportBrace1", Vector3.new(diagLength, 0.3, 0.5), floorPosition + Vector3.new(0, supportY, 0), unitXZ(right + fwd), CONFIG.materials.metal, CONFIG.colors.metal)
-    addOrientedPart(trap, "SupportBrace2", Vector3.new(diagLength, 0.3, 0.5), floorPosition + Vector3.new(0, supportY, 0), unitXZ(right - fwd), CONFIG.materials.metal, CONFIG.colors.metal)
+    -- Diagonal under-pit support braces -- same reasoning: fine lying
+    -- flat under a floor trap, but they read as long stray rods once
+    -- the whole trap is rotated onto a wall, so skip on rotated variants.
+    if not skipTravelGuides then
+        local supportY = -t.pitDepth - 0.05
+        local diagLength = math.sqrt(t.width^2 + t.depth^2) * 0.88
+        addOrientedPart(trap, "SupportBrace1", Vector3.new(diagLength, 0.3, 0.5), floorPosition + Vector3.new(0, supportY, 0), unitXZ(right + fwd), CONFIG.materials.metal, CONFIG.colors.metal)
+        addOrientedPart(trap, "SupportBrace2", Vector3.new(diagLength, 0.3, 0.5), floorPosition + Vector3.new(0, supportY, 0), unitXZ(right - fwd), CONFIG.materials.metal, CONFIG.colors.metal)
+    end
 
     local plankSpan = (t.depth - t.plankGap*(t.plankCount-1)) / t.plankCount
     local plankOffsets = {}
@@ -1313,13 +1323,13 @@ end
 -- for a ceiling-mounted trap (spikes hang down), +/-90 deg for a wall-
 -- mounted trap (spikes point sideways into the corridor).
 local function buildCeilingSpike(parent, name, centerPosition, forward)
-    local trap = buildSpikeTrap(parent, name, centerPosition, forward)
+    local trap = buildSpikeTrap(parent, name, centerPosition, forward, true)
     trap:PivotTo(trap:GetPivot() * CFrame.Angles(0, 0, math.pi))
     return trap
 end
 
 local function buildWallSpike(parent, name, centerPosition, forward, isRightWall)
-    local trap = buildSpikeTrap(parent, name, centerPosition, forward)
+    local trap = buildSpikeTrap(parent, name, centerPosition, forward, true)
     local angle = isRightWall and (math.pi/2) or (-math.pi/2)
     trap:PivotTo(trap:GetPivot() * CFrame.Angles(0, 0, angle))
     return trap
@@ -3103,7 +3113,11 @@ local function generateTrialChamber()
 	addCheckpoint(startFolder, "TrialChamber_Start", cursor)
 	
 	local _, startExitPos = buildStandardTransition(root, "Entrance_Corridor", cursor, forward)
-	cursor = startExitPos + forward * CONFIG.layout.roomGap
+	-- No roomGap here: Room A's own EntranceDoor frame provides the visual
+	-- transition, and the corridor previously left an unfilled 4-stud void
+	-- (no floor/walls/ceiling) between its exit and Room A's start -- the
+	-- gap visible right at the entrance in-game.
+	cursor = startExitPos
 	
 	-- ROOM A
 	print("Building Room A: Trap Corridor...")
