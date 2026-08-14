@@ -1,0 +1,2414 @@
+--!strict
+
+-- Trial Chamber V4: Room A Complete (Stage 1A + Visuals)
+
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local buildSpikeTrap
+
+-- Generated as a single, self-contained CommandBar script
+
+------------------------------------------------------------------------
+
+-- 1. CONFIGURATION
+
+------------------------------------------------------------------------
+
+local CONFIG = {
+
+    Debug = false,
+
+    MAX_BASEPARTS = 8000,
+
+    
+
+    roomA = {
+
+        width = 30,
+
+        length = 250,
+
+        wallThickness = 4,
+
+    },
+
+    
+
+    
+    spikeTrap = {
+        width = 11,
+        depth = 9,
+        housingMargin = 2.1,
+        housingLowHeight = 0.9,
+        housingCapHeight = 0.55,
+        pitDepth = 1.6,
+        frameThickness = 0.9,
+        plankCount = 6,
+        plankGap = 0.4,
+        spikeCols = 3,
+        spikeBaseRadius = 0.5,
+        spikeHeight = 2.8,
+        spikeSegments = 4,
+        springCoils = 4,
+        restOffsetY = -1.0,
+        extendOffsetY = 3.4,
+        cycleSeconds = 4.5,
+        damage = 34,
+    },
+    swingingBlade = {
+        mountDrop = 3.0,
+        axleLength = 3.2,
+        armLength = 11,
+        bladeRadius = 3.2,
+        counterArmLength = 1.3,
+        counterweightRadius = 0.85,
+        chainLinks = 5,
+        swingDegrees = 42,
+        periodSeconds = 3.2,
+        damage = 40,
+    },
+    portcullis = {
+        leafHeightRatio = 0.75,
+        verticalBars = 9,
+        horizontalBars = 3
+    },
+
+    roomB = {
+
+        radius = 50,
+
+        wallThickness = 4,
+
+    },
+
+}
+
+------------------------------------------------------------------------
+
+-- 2. MATERIALS & PALETTE
+
+------------------------------------------------------------------------
+
+local MAT = {
+
+    floor = Enum.Material.Slate,
+
+    wall = Enum.Material.Cobblestone,
+
+    metal = Enum.Material.Metal,
+
+    foundation = Enum.Material.Rock,
+
+    cliff = Enum.Material.Basalt,
+
+    trim = Enum.Material.Concrete,
+
+}
+
+local COLOR = {
+
+    floor = Color3.fromRGB(58, 58, 63),
+
+    wall = Color3.fromRGB(72, 70, 75),
+
+    wallDark = Color3.fromRGB(42, 46, 60),
+
+    metal = Color3.fromRGB(35, 35, 40),
+
+    foundation = Color3.fromRGB(40, 38, 35),
+
+    cliff = Color3.fromRGB(50, 48, 45),
+
+    trim = Color3.fromRGB(50, 48, 53),
+
+}
+
+-- Visual Pass Palette Extensions
+
+local STONE   = Enum.Material.Cobblestone
+
+local SLATE   = Enum.Material.Slate
+
+local METAL   = Enum.Material.Metal
+
+local IRON    = Enum.Material.DiamondPlate
+
+local WOOD    = Enum.Material.Wood
+
+local GRASS   = Enum.Material.Grass
+
+local NEON    = Enum.Material.Neon
+
+local C_STONE      = Color3.fromRGB(72, 70, 75)
+local C_MOSSY      = Color3.fromRGB(80, 85, 75)
+
+local C_DARK_STONE = Color3.fromRGB(50, 48, 53)
+
+local C_LITE_STONE = Color3.fromRGB(90, 88, 85)
+
+local C_IRON       = Color3.fromRGB(35, 35, 40)
+
+local C_DARK_IRON  = Color3.fromRGB(25, 25, 30)
+
+local C_SPIKE      = Color3.fromRGB(45, 42, 48)
+
+local C_WOOD       = Color3.fromRGB(85, 60, 35)
+
+local C_FLAME      = Color3.fromRGB(255, 160, 50)
+
+local C_WARM       = Color3.fromRGB(255, 180, 80)
+
+local C_MOSS       = Color3.fromRGB(40, 65, 30)
+
+local C_VINE       = Color3.fromRGB(35, 55, 25)
+
+local C_BLADE      = Color3.fromRGB(55, 55, 60)
+
+local C_RUBBLE     = Color3.fromRGB(80, 78, 73)
+
+-- Spike / Blade trap materials, ported as-authored from the V3 draft
+local SPIKE_STEEL   = Enum.Material.CorrodedMetal
+local WOOD_PLANKS   = Enum.Material.WoodPlanks
+local C_SPIKE_STEEL = Color3.fromRGB(52, 54, 58)
+local C_SPRING      = Color3.fromRGB(118, 120, 126)
+local C_COUNTERWEIGHT = Color3.fromRGB(40, 40, 44)
+local C_ANCIENT_STONE = Color3.fromRGB(54, 56, 52)
+local C_TRAP_WOOD   = Color3.fromRGB(92, 64, 39)
+
+------------------------------------------------------------------------
+
+-- 3. MAP MANAGER
+
+------------------------------------------------------------------------
+
+local MapManager = {
+
+    rooms = {}
+
+}
+
+function MapManager.init()
+
+    MapManager.rooms = {
+
+        Forecourt = {
+            position = Vector3.new(0, 0, -15),
+            zStart = -30,
+            zEnd = 0,
+            y = 0
+        },
+
+        RoomA = {
+            position = Vector3.new(0, 0, 125),
+            zStart = 0,
+            zEnd = 250,
+            yStart = 0,
+            yEnd = 5
+        },
+
+        ClearanceChamber = {
+            position = Vector3.new(0, 5, 265),
+            zStart = 250,
+            zEnd = 280,
+            y = 5,
+            width = 30,
+            height = 24
+        },
+
+        GateAB = {
+            position = Vector3.new(0, 5, 280),
+            z = 280,
+            y = 5,
+            width = 14,
+            height = 19
+        },
+
+        TransAB = {
+            zStart = 280,
+            yStart = 5,
+            zEnd = 303.427,
+            yEnd = 10,
+            width = 14
+        },
+
+        RoomB = {
+            position = Vector3.new(0, 10, 350),
+            radius = 50,
+            y = 10,
+            zSouth = 303.827,
+            zNorth = 396.173
+        }
+
+    }
+
+end
+
+------------------------------------------------------------------------
+
+-- 4. GEOMETRY CORE
+
+------------------------------------------------------------------------
+
+local GeometryCore = {
+
+    partCount = { total = 0, structural = 0, grounding = 0, visual = 0 }
+
+}
+
+function GeometryCore.incrementCount(category)
+
+    GeometryCore.partCount.total += 1
+
+    if category then
+
+        GeometryCore.partCount[category] = (GeometryCore.partCount[category] or 0) + 1
+
+    end
+
+end
+
+function GeometryCore.getRight(forward)
+
+    return Vector3.new(forward.Z, 0, -forward.X)
+
+end
+
+function GeometryCore.orientedCFrame(position, forward)
+
+    local right = GeometryCore.getRight(forward)
+
+    local up = Vector3.new(0, 1, 0)
+
+    return CFrame.fromMatrix(position, right, up, -forward)
+
+end
+
+function GeometryCore.newFolder(parent, name)
+
+    local folder = Instance.new("Folder")
+
+    folder.Name = name
+
+    folder.Parent = parent
+
+    return folder
+
+end
+
+function GeometryCore.newPart(properties, category)
+
+    local part = Instance.new("Part")
+
+    part.Anchored = true
+
+    part.CanCollide = true
+
+    part.CastShadow = true
+
+    part.TopSurface = Enum.SurfaceType.Smooth
+
+    part.BottomSurface = Enum.SurfaceType.Smooth
+
+    for k, v in pairs(properties) do part[k] = v end
+
+    GeometryCore.incrementCount(category or "structural")
+
+    return part
+
+end
+
+function GeometryCore.addOrientedPart(parent, name, size, position, forward, material, color, category)
+
+    return GeometryCore.newPart({
+
+        Name = name, Size = size, CFrame = GeometryCore.orientedCFrame(position, forward),
+
+        Material = material, Color = color, Parent = parent
+
+    }, category)
+
+end
+
+local function np(name, size, cframe, material, color, parent, canCollide)
+
+    local p = Instance.new("Part")
+
+    p.Name = name; p.Size = size; p.CFrame = cframe
+
+    p.Anchored = true; p.CanCollide = (canCollide ~= false)
+
+    p.Material = material; p.Color = color
+
+    p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+
+    p.Parent = parent; GeometryCore.incrementCount("visual")
+
+    return p
+
+end
+
+local function nw(name, size, cframe, material, color, parent)
+
+    local p = Instance.new("WedgePart")
+
+    p.Name = name; p.Size = size; p.CFrame = cframe
+
+    p.Anchored = true; p.CanCollide = false
+
+    p.Material = material; p.Color = color
+
+    p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+
+    p.Parent = parent; GeometryCore.incrementCount("visual")
+
+    return p
+
+end
+
+local function nc(name, diameter, length, cframe, material, color, parent, canCollide)
+
+    local p = Instance.new("Part")
+
+    p.Shape = Enum.PartType.Cylinder
+
+    p.Name = name; p.Size = Vector3.new(length, diameter, diameter); p.CFrame = cframe
+
+    p.Anchored = true; p.CanCollide = (canCollide ~= false)
+
+    p.Material = material; p.Color = color
+
+    p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+
+    p.Parent = parent; GeometryCore.incrementCount("visual")
+
+    return p
+
+end
+
+------------------------------------------------------------------------
+
+-- 5. MASONRY
+
+------------------------------------------------------------------------
+
+local Masonry = {}
+
+function Masonry.buildWallCourse(parent, name, p1, p2, height, thickness, material, color)
+
+    local edge = (p2 - p1)
+
+    local length = edge.Magnitude
+
+    local dir = edge.Unit
+
+    local inward = Vector3.new(dir.Z, 0, -dir.X)
+
+    local midpoint = (p1 + p2) / 2
+
+    local center = midpoint + Vector3.new(0, height / 2, 0)
+
+    
+
+    local folder = GeometryCore.newFolder(parent, name)
+
+    local courses = 3
+
+    local cHeight = height / courses
+
+    for i = 1, courses do
+
+        local cCenter = midpoint + Vector3.new(0, (i - 0.5) * cHeight, 0)
+
+        local cFrame = CFrame.fromMatrix(cCenter, dir, Vector3.yAxis, -inward)
+
+        GeometryCore.newPart({
+
+            Name = "Course_" .. i, Size = Vector3.new(length, cHeight, thickness),
+
+            CFrame = cFrame, Material = material or MAT.wall, Color = color or COLOR.wall, Parent = folder
+
+        }, "structural")
+
+    end
+
+    return folder
+
+end
+
+function Masonry.buildPilaster(parent, name, pos, fwd, width, height, depth)
+
+    local folder = GeometryCore.newFolder(parent, name)
+
+    local bHeight = 2
+
+    GeometryCore.addOrientedPart(folder, "Base", Vector3.new(width + 1, bHeight, depth + 1), pos + Vector3.new(0, bHeight/2, 0), fwd, MAT.trim, COLOR.trim, "structural")
+
+    local sHeight = height - bHeight - 2
+
+    GeometryCore.addOrientedPart(folder, "Shaft", Vector3.new(width, sHeight, depth), pos + Vector3.new(0, bHeight + sHeight/2, 0), fwd, MAT.wall, COLOR.wall, "structural")
+
+    GeometryCore.addOrientedPart(folder, "Capital", Vector3.new(width + 1.5, 2, depth + 1.5), pos + Vector3.new(0, height - 1, 0), fwd, MAT.trim, COLOR.trim, "structural")
+
+    return folder
+
+end
+
+function Masonry.buildIntegratedArch(parent, name, p1, p2, height, thickness, openingWidth, openingHeight, mat, col)
+
+    local folder = GeometryCore.newFolder(parent, name)
+
+    local edge = (p2 - p1)
+
+    local length = edge.Magnitude
+
+    local dir = edge.Unit
+
+    local inward = Vector3.new(dir.Z, 0, -dir.X)
+
+    local midpoint = (p1 + p2) / 2
+
+    local sideWidth = (length - openingWidth) / 2
+
+    local lintelHeight = height - openingHeight
+
+    
+
+    local leftCenter = p1 + dir * (sideWidth / 2) + Vector3.new(0, height / 2, 0)
+
+    GeometryCore.newPart({
+
+        Name = "WallL", Size = Vector3.new(sideWidth, height, thickness),
+
+        CFrame = CFrame.fromMatrix(leftCenter, dir, Vector3.yAxis, -inward), Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    local rightCenter = p2 - dir * (sideWidth / 2) + Vector3.new(0, height / 2, 0)
+
+    GeometryCore.newPart({
+
+        Name = "WallR", Size = Vector3.new(sideWidth, height, thickness),
+
+        CFrame = CFrame.fromMatrix(rightCenter, dir, Vector3.yAxis, -inward), Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    local lintelCenter = midpoint + Vector3.new(0, openingHeight + lintelHeight / 2, 0)
+
+    GeometryCore.newPart({
+
+        Name = "Lintel", Size = Vector3.new(openingWidth, lintelHeight, thickness),
+
+        CFrame = CFrame.fromMatrix(lintelCenter, dir, Vector3.yAxis, -inward), Material = MAT.trim, Color = COLOR.trim, Parent = folder
+
+    }, "structural")
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "OpeningAperture", Size = Vector3.new(openingWidth, openingHeight, thickness + 0.1),
+
+        CFrame = CFrame.fromMatrix(midpoint + Vector3.new(0, openingHeight/2, 0), dir, Vector3.yAxis, -inward),
+
+        Transparency = 1, CanCollide = false, Parent = folder
+
+    }, "structural")
+
+    return folder
+
+end
+
+function Masonry.buildGrounding(parent, pos, width, length, depth)
+
+    local folder = GeometryCore.newFolder(parent, "RuggedGrounding")
+
+    
+
+    local coreW = width * 0.8
+
+    local coreL = length * 0.8
+
+    GeometryCore.newPart({
+
+        Name = "FoundationCore", Size = Vector3.new(coreW, depth, coreL),
+
+        CFrame = CFrame.new(pos - Vector3.new(0, depth / 2 + 1, 0)),
+
+        Material = MAT.foundation, Color = COLOR.foundation, Parent = folder
+
+    }, "grounding")
+
+    
+
+    math.randomseed(math.floor(pos.X + pos.Y + pos.Z + width + length))
+
+    local edgeBlocks = math.floor(length / 2.5) -- Scaled for length
+
+    for edge = 1, 4 do
+
+        local isLongEdge = (edge == 1 or edge == 2)
+
+        local iter = isLongEdge and edgeBlocks or math.floor(width / 2.5)
+
+        for i = 1, iter do
+
+            local t = (math.random() - 0.5)
+
+            local bx, bz
+
+            if edge == 1 then bx = t * width; bz = length/2
+
+            elseif edge == 2 then bx = t * width; bz = -length/2
+
+            elseif edge == 3 then bx = width/2; bz = t * length
+
+            else bx = -width/2; bz = t * length end
+
+            
+
+            -- Prevent buttresses from spawning in the center of edges (blocking doorways)
+
+            if math.abs(bx) < 20 and math.abs(bz) >= length/2 - 1 then
+
+                continue
+
+            end
+
+            if math.abs(bz) < 20 and math.abs(bx) >= width/2 - 1 then
+
+                continue
+
+            end
+
+            
+
+            -- Mossy ruins treatment on top-facing edges (if not completely hidden)
+
+            local isMossy = math.random() > 0.6
+
+            local cMat = isMossy and MAT.wall or MAT.cliff
+
+            local cCol = isMossy and C_LITE_STONE or COLOR.cliff
+
+            
+
+            bx = bx + (bx > 0 and 2 or (bx < 0 and -2 or 0))
+
+            bz = bz + (bz > 0 and 2 or (bz < 0 and -2 or 0))
+
+            
+
+            local bw = 15 + math.random() * 15
+
+            local bl = 15 + math.random() * 15
+
+            local bh = depth + math.random() * 20
+
+            
+
+            local yOffset = isMossy and (-bh/2 - 0.5) or (-bh/2 - 2) -- Mossy ones slightly higher
+
+            local bCFrame = CFrame.new(pos + Vector3.new(bx, yOffset, bz)) * CFrame.Angles(0, math.random() * math.pi, 0)
+
+            
+
+            GeometryCore.newPart({
+
+                Name = "CliffButtress", Size = Vector3.new(bw, bh, bl),
+
+                CFrame = bCFrame, Material = cMat, Color = cCol, Parent = folder
+
+            }, "grounding")
+
+        end
+
+    end
+
+end
+
+function Masonry.buildBlindArchBay(parent, name, p1, p2, height, thickness, recessDepth, mat, col)
+
+    local folder = GeometryCore.newFolder(parent, name)
+
+    local edge = (p2 - p1)
+
+    local length = edge.Magnitude
+
+    local dir = edge.Unit
+
+    local inward = Vector3.new(-dir.Z, 0, dir.X)
+
+    
+
+    local pilasterWidth = 2
+
+    local bayWidth = length - (pilasterWidth * 2)
+
+    local p1C = p1 + dir * (pilasterWidth/2)
+
+    local p2C = p2 - dir * (pilasterWidth/2)
+
+    local pCenter = p1 + dir * (length/2)
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "PilasterL", Size = Vector3.new(pilasterWidth, height, thickness),
+
+        CFrame = CFrame.fromMatrix(p1C + Vector3.new(0, height/2, 0), dir, Vector3.yAxis, -inward),
+
+        Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "PilasterR", Size = Vector3.new(pilasterWidth, height, thickness),
+
+        CFrame = CFrame.fromMatrix(p2C + Vector3.new(0, height/2, 0), dir, Vector3.yAxis, -inward),
+
+        Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    local archHeight = 6
+
+    local clearHeight = height - archHeight
+
+    GeometryCore.newPart({
+
+        Name = "BayArch", Size = Vector3.new(bayWidth + 0.1, archHeight, thickness),
+
+        CFrame = CFrame.fromMatrix(pCenter + Vector3.new(0, clearHeight + archHeight/2, 0), dir, Vector3.yAxis, -inward),
+
+        Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "ArchBracketL", Size = Vector3.new(8, 8, thickness + 0.1),
+
+        CFrame = CFrame.fromMatrix(p1C + dir*(pilasterWidth/2) + Vector3.new(0, clearHeight, 0), dir, Vector3.yAxis, -inward) * CFrame.Angles(0, 0, math.pi/4),
+
+        Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "ArchBracketR", Size = Vector3.new(8, 8, thickness + 0.1),
+
+        CFrame = CFrame.fromMatrix(p2C - dir*(pilasterWidth/2) + Vector3.new(0, clearHeight, 0), dir, Vector3.yAxis, -inward) * CFrame.Angles(0, 0, math.pi/4),
+
+        Material = mat or MAT.wall, Color = col or COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    
+
+    local backThickness = thickness - recessDepth
+
+    local backShift = recessDepth / 2
+
+    local backCenter = pCenter - inward * backShift
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "RecessedWall", Size = Vector3.new(bayWidth + 0.2, clearHeight + 0.1, backThickness),
+
+        CFrame = CFrame.fromMatrix(backCenter + Vector3.new(0, clearHeight/2, 0), dir, Vector3.yAxis, -inward),
+
+        Material = MAT.wall, Color = COLOR.wallDark, Parent = folder
+
+    }, "structural")
+
+    
+
+    return folder
+
+end
+
+------------------------------------------------------------------------
+
+-- 6. ENTRY FORECOURT (Z=-30 to 0)
+
+------------------------------------------------------------------------
+
+local EntryForecourt = {}
+
+function EntryForecourt.build(parent)
+
+    local folder = GeometryCore.newFolder(parent, "EntryForecourt")
+
+    local pos = MapManager.rooms.Forecourt.position
+
+    
+
+    Masonry.buildGrounding(folder, pos, 30 + 40, 30 + 20, 60)
+
+    
+
+    -- Floor slab
+
+    GeometryCore.addOrientedPart(folder, "StructuralFloor", Vector3.new(30, 2, 30), Vector3.new(0, -1, -15), Vector3.new(0,0,-1), STONE, C_DARK_STONE, "structural")
+
+    
+
+    -- Low side walls
+
+    for side = -1, 1, 2 do
+
+        np("RuinedWall", Vector3.new(3, 2, 30), CFrame.new(side * 13.5, 1, -15), STONE, C_DARK_STONE, folder)
+
+        -- Torch anchors
+
+        np("TorchAnchor", Vector3.new(4, 3, 4), CFrame.new(side * 13, 1.5, -15), STONE, C_LITE_STONE, folder)
+
+        
+
+        local tf = Instance.new("Folder")
+
+        tf.Name = "Torch_" .. (side > 0 and "R" or "L")
+
+        tf.Parent = folder
+
+        
+
+        nc("Shaft", 0.35, 2.5, CFrame.new(side * 13, 4, -15), WOOD, C_WOOD, tf, false)
+
+        local flame = np("Flame", Vector3.new(0.5, 0.9, 0.5), CFrame.new(side * 13, 5.5, -15), NEON, C_FLAME, tf, false)
+
+        flame.Transparency = 0.25
+
+        local pl = Instance.new("PointLight")
+
+        pl.Color = C_WARM; pl.Brightness = 1.2; pl.Range = 18; pl.Parent = flame
+
+    end
+
+    
+
+    -- Spawn Marker
+
+    local sm = np("TrialStartMarker", Vector3.new(6, 0.2, 6), CFrame.new(0, 0.1, -20), METAL, C_DARK_IRON, folder, false)
+
+    local sl = Instance.new("SpawnLocation")
+
+    sl.Size = Vector3.new(6, 0.2, 6)
+
+    sl.CFrame = CFrame.new(0, 0.1, -20)
+
+    sl.Transparency = 1
+
+    sl.CanCollide = false
+
+    sl.Parent = folder
+
+    
+
+    return folder
+
+end
+
+------------------------------------------------------------------------
+
+-- 7. ROOM A (BASE GEOMETRY)
+
+------------------------------------------------------------------------
+
+local RoomA = {}
+
+function RoomA.build(parent)
+
+    local folder = GeometryCore.newFolder(parent, "RoomA")
+
+    local pos = MapManager.rooms.RoomA.position
+
+    
+
+    local length = 250
+
+    local width = 30
+
+    local height = 24
+
+    local t = 4
+
+    
+
+    Masonry.buildGrounding(folder, pos, width + 40, length + 40, 60)
+
+    
+
+    -- Structural floor segments to support physical pits/trenches
+
+    local floorData = {
+
+        {z = 17.5, len = 35}, -- Zone 1: Entry
+
+        -- Zone 2 (Z=35-75): 3 Pits. The base sits low, safe lanes built up.
+
+        {z = 55, len = 40, y = -6}, 
+
+        -- Zone 3 (Z=75-125): Blade lane
+
+        {z = 100, len = 50}, 
+
+        -- Zone 4 (Z=125-170): Central trench
+
+        {z = 147.5, len = 45, y = -6},
+
+        -- Zone 5 (Z=170-185): Gate approach
+
+        {z = 177.5, len = 15},
+
+    }
+
+    
+
+    for i, fd in ipairs(floorData) do
+
+        local yOffset = fd.y or 0
+
+        GeometryCore.addOrientedPart(folder, "StructuralFloor_Seg"..i, Vector3.new(width, 2, fd.len), 
+
+            Vector3.new(0, -1 + yOffset, fd.z), Vector3.new(0,0,-1), MAT.floor, COLOR.floor, "structural")
+
+    end
+
+    
+
+    local rampLen = 15
+
+    local rampRise = 5
+
+    local rampPitch = math.atan2(rampRise, rampLen)
+
+    local rampHyp = math.sqrt(rampLen^2 + rampRise^2)
+
+    local rampCFrame = CFrame.new(Vector3.new(0, rampRise/2 - 1, 185 + rampLen/2)) * CFrame.Angles(rampPitch, 0, 0)
+
+    GeometryCore.newPart({
+
+        Name = "StructuralRamp", Size = Vector3.new(width, 2, rampHyp),
+
+        CFrame = rampCFrame, Material = MAT.floor, Color = COLOR.floor, Parent = folder
+
+    }, "structural")
+
+    
+
+    local numBays = 10
+
+    local bayLength = length / numBays
+
+    local recessDepth = 2.5
+
+    
+
+    for i = 1, numBays do
+
+        local bayZStart = (i - 1) * bayLength
+
+        local bayZEnd = bayZStart + bayLength
+
+        
+
+        local p1L = Vector3.new(-width/2, 0, bayZStart)
+
+        local p2L = Vector3.new(-width/2, 0, bayZEnd)
+
+        Masonry.buildBlindArchBay(folder, "BayL_"..i, p1L, p2L, height, t, recessDepth, MAT.wall, COLOR.wall)
+
+        
+
+        local p1R = Vector3.new(width/2, 0, bayZEnd)
+
+        local p2R = Vector3.new(width/2, 0, bayZStart)
+
+        Masonry.buildBlindArchBay(folder, "BayR_"..i, p1R, p2R, height, t, recessDepth, MAT.wall, COLOR.wall)
+
+    end
+
+    
+
+    local gateParams = MapManager.rooms.GateAB
+
+    local p1G = Vector3.new(-width/2, gateParams.y, gateParams.z)
+
+    local p2G = Vector3.new(width/2, gateParams.y, gateParams.z)
+
+    Masonry.buildIntegratedArch(folder, "GateAB", p1G, p2G, height, t, gateParams.width, gateParams.height, MAT.wall, COLOR.wall)
+
+    
+
+    return folder
+
+end
+
+------------------------------------------------------------------------
+
+-- 8. ROOM B & TRANSITIONS (BASE GEOMETRY)
+
+------------------------------------------------------------------------
+
+local ClearanceChamber = {}
+function ClearanceChamber.build(parent)
+    local folder = GeometryCore.newFolder(parent, "ClearanceChamber")
+    local zStart = MapManager.rooms.ClearanceChamber.zStart
+    local zEnd = MapManager.rooms.ClearanceChamber.zEnd
+    local length = zEnd - zStart
+    local width = MapManager.rooms.ClearanceChamber.width
+    local height = MapManager.rooms.ClearanceChamber.height
+    local roomAWidth = CONFIG.roomA.width
+    local gateWidth = MapManager.rooms.GateAB.width
+    
+    local pos = Vector3.new(0, 0, zStart)
+    local fwd = Vector3.new(0, 0, 1)
+    local right = Vector3.new(1, 0, 0)
+    
+    local function p(n, s, c, m, col)
+        local pt = Instance.new("Part"); pt.Name = n; pt.Size = s; pt.CFrame = c; pt.Anchored = true
+        pt.Material = m; pt.Color = col; pt.Parent = folder; GeometryCore.incrementCount("structural"); return pt
+    end
+
+    -- Floor (Distinct patterned threshold)
+    p("FloorBase", Vector3.new(width, 2, length), CFrame.new(0, -1, zStart + length/2), Enum.Material.Cobblestone, COLOR.floor)
+    p("FloorTrim", Vector3.new(width - 2, 0.2, length - 2), CFrame.new(0, 0.1, zStart + length/2), Enum.Material.Slate, COLOR.trim)
+    
+    -- Left and Right Side Walls
+    p("LeftWall", Vector3.new(4, height, length), CFrame.new(-width/2 - 2, height/2, zStart + length/2), Enum.Material.Cobblestone, COLOR.wall)
+    p("RightWall", Vector3.new(4, height, length), CFrame.new(width/2 + 2, height/2, zStart + length/2), Enum.Material.Cobblestone, COLOR.wall)
+    
+    -- Architectural Framing (Thick stone pillars to define the space)
+    local numPillars = 3
+    for i = 0, numPillars - 1 do
+        -- Space pillars evenly, but keep them slightly away from the exact edge so they don't clip awkwardly
+        local pz = zStart + 2 + (length - 4) * (i / (numPillars - 1))
+        p("PillarL_"..i, Vector3.new(3, height, 4), CFrame.new(-width/2 + 1.5, height/2, pz), Enum.Material.Rock, COLOR.foundation)
+        p("PillarR_"..i, Vector3.new(3, height, 4), CFrame.new(width/2 - 1.5, height/2, pz), Enum.Material.Rock, COLOR.foundation)
+        
+        -- Overhead support beam to visually compress the ceiling
+        p("CeilingBeam_"..i, Vector3.new(width, 3, 4), CFrame.new(0, height - 1.5, pz), Enum.Material.Rock, COLOR.foundation)
+    end
+    
+    -- Ceiling
+    p("Ceiling", Vector3.new(width + 8, 2, length), CFrame.new(0, height + 1, zStart + length/2), Enum.Material.Cobblestone, Color3.fromRGB(115, 118, 125))
+    
+    -- Front Wall (Connecting Room A to Clearance Chamber)
+    local frontWallWidth = (width - roomAWidth) / 2
+    if frontWallWidth > 0 then
+        p("FrontWallL", Vector3.new(frontWallWidth, height, 4), CFrame.new(-roomAWidth/2 - frontWallWidth/2, height/2, zStart + 2), Enum.Material.Cobblestone, COLOR.wall)
+        p("FrontWallR", Vector3.new(frontWallWidth, height, 4), CFrame.new(roomAWidth/2 + frontWallWidth/2, height/2, zStart + 2), Enum.Material.Cobblestone, COLOR.wall)
+    elseif frontWallWidth < 0 then
+        p("FrontWallL", Vector3.new(-frontWallWidth, height, 4), CFrame.new(-width/2 + frontWallWidth/2, height/2, zStart - 2), Enum.Material.Cobblestone, COLOR.wall)
+        p("FrontWallR", Vector3.new(-frontWallWidth, height, 4), CFrame.new(width/2 - frontWallWidth/2, height/2, zStart - 2), Enum.Material.Cobblestone, COLOR.wall)
+    end
+    
+    local roomAHeight = 24
+    if height > roomAHeight then
+        p("FrontWallTop", Vector3.new(roomAWidth, height - roomAHeight, 4), CFrame.new(0, roomAHeight + (height - roomAHeight)/2, zStart + 2), Enum.Material.Cobblestone, COLOR.wall)
+    elseif height < roomAHeight then
+        p("FrontWallTopRoomA", Vector3.new(roomAWidth, roomAHeight - height, 4), CFrame.new(0, height + (roomAHeight - height)/2, zStart - 2), Enum.Material.Cobblestone, COLOR.wall)
+    end
+    
+    -- Back Wall (Recessed Gate Opening)
+    local backWallWidth = (width - gateWidth) / 2
+    if backWallWidth > 0 then
+        p("BackWallL", Vector3.new(backWallWidth, height, 4), CFrame.new(-gateWidth/2 - backWallWidth/2, height/2, zEnd - 2), Enum.Material.Cobblestone, COLOR.wall)
+        p("BackWallR", Vector3.new(backWallWidth, height, 4), CFrame.new(gateWidth/2 + backWallWidth/2, height/2, zEnd - 2), Enum.Material.Cobblestone, COLOR.wall)
+    end
+    
+    local gateHeight = MapManager.rooms.GateAB.height
+    if height > gateHeight then
+        p("GateHeader", Vector3.new(gateWidth, height - gateHeight, 4), CFrame.new(0, gateHeight + (height - gateHeight)/2, zEnd - 2), Enum.Material.Cobblestone, COLOR.wall)
+    end
+    
+    -- Chamber Torches (Attached to the middle pillars)
+    for _, side in ipairs({-1, 1}) do
+        local tx = side * (width/2 - 2.5)
+        local tz = zStart + length/2
+        local tf = GeometryCore.newFolder(folder, "Torch_" .. (side > 0 and "R" or "L"))
+        p("Sconce", Vector3.new(1, 2, 1), CFrame.new(tx, 10, tz), Enum.Material.Wood, Color3.fromRGB(60, 40, 20)).Parent = tf
+        p("SconceBase", Vector3.new(1.5, 0.5, 1.5), CFrame.new(tx, 9, tz), Enum.Material.Metal, Color3.fromRGB(30, 30, 30)).Parent = tf
+        local flame = p("Flame", Vector3.new(0.5, 0.5, 0.5), CFrame.new(tx, 11.5, tz), Enum.Material.Neon, Color3.fromRGB(255, 150, 50))
+        flame.Parent = tf
+        local pl = Instance.new("PointLight")
+        pl.Color = Color3.fromRGB(255, 160, 80); pl.Range = 40; pl.Brightness = 4; pl.Shadows = true; pl.Parent = flame
+    end
+end
+
+local function buildBrazier(parent, name, pos)
+    local model = GeometryCore.newFolder(parent, name)
+    GeometryCore.newPart({Name="Base", Size=Vector3.new(3, 3, 3), CFrame=CFrame.new(pos + Vector3.new(0, 1.5, 0)), Material=Enum.Material.Cobblestone, Color=COLOR.wall, Parent=model})
+    GeometryCore.newPart({Name="Bowl", Size=Vector3.new(3.6, 1, 3.6), CFrame=CFrame.new(pos + Vector3.new(0, 3.5, 0)), Material=Enum.Material.Slate, Color=COLOR.wallDark, Parent=model})
+    local flame = GeometryCore.newPart({Name="Flame", Size=Vector3.new(1.8, 1.8, 1.8), CFrame=CFrame.new(pos + Vector3.new(0, 4.2, 0)), Material=Enum.Material.Neon, Color=Color3.fromRGB(255, 120, 40), Parent=model})
+    local pl = Instance.new("PointLight")
+    pl.Color = Color3.fromRGB(255, 140, 60); pl.Range = 25; pl.Brightness = 3; pl.Shadows = true; pl.Parent = flame
+    return model
+end
+
+local function buildBanner(parent, name, pos, fwd, isStanding)
+    local model = GeometryCore.newFolder(parent, name)
+    local right = GeometryCore.getRight(fwd)
+    if isStanding then
+        GeometryCore.newPart({Name="PoleL", Size=Vector3.new(0.6, 14, 0.6), CFrame=CFrame.new(pos + right * 3 + Vector3.new(0, 7, 0)), Material=Enum.Material.Wood, Color=Color3.fromRGB(70, 50, 30), Parent=model})
+        GeometryCore.newPart({Name="PoleR", Size=Vector3.new(0.6, 14, 0.6), CFrame=CFrame.new(pos - right * 3 + Vector3.new(0, 7, 0)), Material=Enum.Material.Wood, Color=Color3.fromRGB(70, 50, 30), Parent=model})
+        GeometryCore.newPart({Name="Crossbar", Size=Vector3.new(6.6, 0.6, 0.6), CFrame=CFrame.new(pos + Vector3.new(0, 13, 0)), Material=Enum.Material.Wood, Color=Color3.fromRGB(70, 50, 30), Parent=model})
+        GeometryCore.newPart({Name="Fabric", Size=Vector3.new(5.6, 10, 0.2), CFrame=CFrame.new(pos + Vector3.new(0, 7.5, 0)), Material=Enum.Material.Fabric, Color=Color3.fromRGB(20, 40, 100), Parent=model})
+    else
+        GeometryCore.newPart({Name="Crossbar", Size=Vector3.new(6, 0.6, 0.6), CFrame=CFrame.new(pos + fwd * 0.5), Material=Enum.Material.Wood, Color=Color3.fromRGB(70, 50, 30), Parent=model})
+        GeometryCore.newPart({Name="Fabric", Size=Vector3.new(5.6, 14, 0.2), CFrame=CFrame.new(pos + fwd * 0.6 + Vector3.new(0, -7, 0)), Material=Enum.Material.Fabric, Color=Color3.fromRGB(20, 40, 100), Parent=model})
+    end
+    return model
+end
+
+local function buildStake(parent, name, pos)
+    local model = GeometryCore.newFolder(parent, name)
+    GeometryCore.newPart({Name="Post", Size=Vector3.new(1.2, 7, 1.2), CFrame=CFrame.new(pos + Vector3.new(0, 3.5, 0)), Material=Enum.Material.Wood, Color=Color3.fromRGB(80, 60, 40), Parent=model})
+    GeometryCore.newPart({Name="Cross", Size=Vector3.new(4, 0.8, 0.8), CFrame=CFrame.new(pos + Vector3.new(0, 5.5, 0)), Material=Enum.Material.Wood, Color=Color3.fromRGB(80, 60, 40), Parent=model})
+    return model
+end
+
+local RoomB = {}
+
+function RoomB.build(parent)
+    local folder = GeometryCore.newFolder(parent, "RoomB")
+    local pos = MapManager.rooms.RoomB.position
+    local R = MapManager.rooms.RoomB.radius
+    local t = 4
+    local height = 24
+
+    Masonry.buildGrounding(folder, pos, R*2, R*2, 60)
+    local floorFolder = GeometryCore.newFolder(folder, "StructuralFloor")
+    local ap = R * math.cos(math.pi / 8)
+    local sl = 2 * R * math.sin(math.pi / 8)
+
+    -- Full mossy/algae floor covering the entire room
+    GeometryCore.newPart({
+        Name = "Floor_Main", Size = Vector3.new(2 * ap, 2, 2 * ap),
+        CFrame = CFrame.new(pos + Vector3.new(0, -1, 0)),
+        Material = Enum.Material.Grass, Color = Color3.fromRGB(55, 75, 45), Parent = floorFolder
+    }, "structural")
+
+    -- Water stream running along ALL 8 sides (wider, more visible)
+    for i = 0, 7 do
+        local angle = i * (math.pi / 4)
+        local dirX = math.sin(angle)
+        local dirZ = math.cos(angle)
+        local edgeCenter = pos + Vector3.new(dirX * (ap - 4), 0, dirZ * (ap - 4))
+        local fwd = Vector3.new(-dirX, 0, -dirZ)
+        local right = GeometryCore.getRight(fwd)
+        GeometryCore.newPart({
+            Name = "WaterEdge_" .. i, Size = Vector3.new(sl + 4, 0.5, 8),
+            CFrame = CFrame.fromMatrix(edgeCenter + Vector3.new(0, -0.1, 0), fwd, Vector3.yAxis, right),
+            Material = Enum.Material.Glass, Color = Color3.fromRGB(25, 75, 65),
+            Transparency = 0.45, CanCollide = false, Parent = floorFolder
+        }, "decorative")
+    end
+
+    -- Walkways (North & South) - slightly raised cobblestone paths
+    GeometryCore.newPart({
+        Name = "Walkway_North", Size = Vector3.new(16, 0.4, ap),
+        CFrame = CFrame.new(pos + Vector3.new(0, 0.2, -ap/2)),
+        Material = Enum.Material.Cobblestone, Color = COLOR.floor, Parent = floorFolder
+    }, "structural")
+    GeometryCore.newPart({
+        Name = "Walkway_South", Size = Vector3.new(16, 0.4, ap),
+        CFrame = CFrame.new(pos + Vector3.new(0, 0.2, ap/2)),
+        Material = Enum.Material.Cobblestone, Color = COLOR.floor, Parent = floorFolder
+    }, "structural")
+
+    local decorFolder = GeometryCore.newFolder(folder, "Decorations")
+    local trapsFolder = GeometryCore.newFolder(folder, "Traps")
+    local wallFolder = GeometryCore.newFolder(folder, "OctagonWalls")
+
+    -- 6 Spike Traps spread around the arena
+    local trapPositions = {
+        {angle = math.rad(20),  dist = 16},
+        {angle = math.rad(80),  dist = 14},
+        {angle = math.rad(150), dist = 18},
+        {angle = math.rad(210), dist = 15},
+        {angle = math.rad(280), dist = 17},
+        {angle = math.rad(340), dist = 13},
+    }
+    for i, tp in ipairs(trapPositions) do
+        local dx = math.sin(tp.angle)
+        local dz = math.cos(tp.angle)
+        local fwd = Vector3.new(-dx, 0, -dz)
+        local trapPos = pos + Vector3.new(dx * tp.dist, 0, dz * tp.dist)
+        buildSpikeTrap(trapsFolder, "SpikeTrap_"..i, trapPos, fwd, true)
+    end
+
+    -- 5 Wooden Stakes placed naturally around the arena edges
+    local stakeData = {
+        {x = -32, z = -20},
+        {x = 35, z = 15},
+        {x = -15, z = 38},
+        {x = 28, z = -28},
+        {x = -38, z = 18},
+    }
+    for i, sd in ipairs(stakeData) do
+        buildStake(decorFolder, "Stake_"..i, pos + Vector3.new(sd.x, 0, sd.z))
+    end
+
+    -- Rubble stones - more concentrated near the edges/sides
+    local rng = Random.new(12345)
+    -- Edge rubble (near walls)
+    for i = 1, 30 do
+        local angle = rng:NextNumber(0, math.pi * 2)
+        local r = rng:NextNumber(ap - 14, ap - 5)
+        local dx = math.sin(angle) * r
+        local dz = math.cos(angle) * r
+        local s = rng:NextNumber(0.8, 3.0)
+        GeometryCore.newPart({
+            Name = "EdgeRubble_" .. i, Size = Vector3.new(s, s * 0.5, s * 0.9),
+            CFrame = CFrame.new(pos + Vector3.new(dx, s * 0.25, dz)) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0),
+            Material = Enum.Material.Cobblestone, Color = Color3.fromRGB(65 + rng:NextInteger(-10, 10), 63 + rng:NextInteger(-10, 10), 58 + rng:NextInteger(-10, 10)),
+            Parent = decorFolder
+        }, "decorative")
+    end
+    -- Scattered interior rubble (fewer, smaller)
+    for i = 1, 12 do
+        local angle = rng:NextNumber(0, math.pi * 2)
+        local r = rng:NextNumber(5, ap - 16)
+        local dx = math.sin(angle) * r
+        local dz = math.cos(angle) * r
+        local s = rng:NextNumber(0.5, 1.8)
+        GeometryCore.newPart({
+            Name = "InnerRubble_" .. i, Size = Vector3.new(s, s * 0.4, s * 0.7),
+            CFrame = CFrame.new(pos + Vector3.new(dx, s * 0.2, dz)) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0),
+            Material = Enum.Material.Cobblestone, Color = Color3.fromRGB(70 + rng:NextInteger(-8, 8), 68 + rng:NextInteger(-8, 8), 62 + rng:NextInteger(-8, 8)),
+            Parent = decorFolder
+        }, "decorative")
+    end
+
+    -- Braziers at the south entrance (flanking the gate, like the reference)
+    buildBrazier(decorFolder, "Brazier_SouthL", pos + Vector3.new(-10, 0, ap - 8))
+    buildBrazier(decorFolder, "Brazier_SouthR", pos + Vector3.new(10, 0, ap - 8))
+    -- Braziers at the north entrance
+    buildBrazier(decorFolder, "Brazier_NorthL", pos + Vector3.new(-10, 0, -(ap - 8)))
+    buildBrazier(decorFolder, "Brazier_NorthR", pos + Vector3.new(10, 0, -(ap - 8)))
+
+    -- Standing Banners flanking the SOUTH entrance (like the reference image)
+    buildBanner(decorFolder, "StandingBanner_SL", pos + Vector3.new(-14, 0, ap - 6), Vector3.new(0, 0, -1), true)
+    buildBanner(decorFolder, "StandingBanner_SR", pos + Vector3.new(14, 0, ap - 6), Vector3.new(0, 0, -1), true)
+
+    -- Build Outer Walls
+    for i = 0, 7 do
+        local angle = i * (math.pi / 4)
+        local dirX = math.sin(angle)
+        local dirZ = math.cos(angle)
+
+        local wallCenter = pos + Vector3.new(dirX * ap, 0, dirZ * ap)
+        local fwd = Vector3.new(-dirX, 0, -dirZ)
+        local right = GeometryCore.getRight(fwd)
+
+        local p1 = wallCenter - right * (sl / 2)
+        local p2 = wallCenter + right * (sl / 2)
+
+        local isNorthWall = (i == 0)
+        local isSouthWall = (i == 4)
+
+        if isNorthWall then
+            Masonry.buildIntegratedArch(wallFolder, "WallSegment_North_GateBC_Hole", p1, p2, height, t, 14, 19, MAT.wall, COLOR.wall)
+            GeometryCore.newPart({
+                Name = "TempBlocker_GateBC", Size = Vector3.new(14, 19, t),
+                CFrame = CFrame.fromMatrix(wallCenter + Vector3.new(0, 9.5, 0), fwd, Vector3.yAxis, right),
+                Material = MAT.wall, Color = COLOR.wallDark, Parent = wallFolder
+            }, "structural")
+        elseif isSouthWall then
+            Masonry.buildIntegratedArch(wallFolder, "WallSegment_South_GateAB_Hole", p1, p2, height, t, 14, 19, MAT.wall, COLOR.wall)
+        else
+            Masonry.buildWallCourse(wallFolder, "WallSegment_" .. i, p1, p2, height, t, MAT.wall, COLOR.wall)
+        end
+        Masonry.buildPilaster(wallFolder, "Pilaster_" .. i, p1, fwd, 4, height, 2)
+
+        -- Moss along wall base
+        GeometryCore.newPart({
+            Name = "WallMoss_" .. i, Size = Vector3.new(sl - 4, 1.5, 4),
+            CFrame = CFrame.fromMatrix(wallCenter + Vector3.new(0, -0.5, 0) + fwd * 2, right, Vector3.yAxis),
+            Material = Enum.Material.Grass, Color = Color3.fromRGB(40, 90, 35), Parent = decorFolder
+        }, "decorative")
+
+        -- Wall greenery/fungus/algae patches at various heights
+        -- Low patch (near base)
+        GeometryCore.newPart({
+            Name = "WallVine_Low_" .. i, Size = Vector3.new(sl * 0.4, 3, 0.6),
+            CFrame = CFrame.fromMatrix(wallCenter + Vector3.new(0, 3, 0) + fwd * (t/2 + 0.3), right, Vector3.yAxis),
+            Material = Enum.Material.Grass, Color = Color3.fromRGB(35, 80, 30), Parent = decorFolder
+        }, "decorative")
+        -- Mid patch (hanging moss)
+        GeometryCore.newPart({
+            Name = "WallVine_Mid_" .. i, Size = Vector3.new(sl * 0.3, 5, 0.5),
+            CFrame = CFrame.fromMatrix(wallCenter + Vector3.new(0, 9, 0) + fwd * (t/2 + 0.3) + right * (sl * 0.15), right, Vector3.yAxis),
+            Material = Enum.Material.Grass, Color = Color3.fromRGB(45, 95, 40), Parent = decorFolder
+        }, "decorative")
+        -- High patch (near top, creeping down)
+        GeometryCore.newPart({
+            Name = "WallVine_High_" .. i, Size = Vector3.new(sl * 0.25, 4, 0.4),
+            CFrame = CFrame.fromMatrix(wallCenter + Vector3.new(0, 17, 0) + fwd * (t/2 + 0.3) - right * (sl * 0.2), right, Vector3.yAxis),
+            Material = Enum.Material.Grass, Color = Color3.fromRGB(30, 70, 25), Parent = decorFolder
+        }, "decorative")
+        -- Fungus/lichen spots (small, scattered on walls)
+        for f = 1, 3 do
+            local fHeight = 2 + f * 5
+            local fOffset = (f - 2) * (sl * 0.15)
+            GeometryCore.newPart({
+                Name = "WallFungus_" .. i .. "_" .. f, Size = Vector3.new(2.5, 2, 0.4),
+                CFrame = CFrame.fromMatrix(wallCenter + Vector3.new(0, fHeight, 0) + fwd * (t/2 + 0.2) + right * fOffset, right, Vector3.yAxis),
+                Material = Enum.Material.Grass, Color = Color3.fromRGB(50, 85, 45), Parent = decorFolder
+            }, "decorative")
+        end
+    end
+
+    -- Wall-hung banners on side walls only (not gates)
+    for i = 1, 7 do
+        if i ~= 4 then -- skip south gate wall
+            local angle = i * (math.pi / 4)
+            local dirX = math.sin(angle)
+            local dirZ = math.cos(angle)
+            local wallCenter = pos + Vector3.new(dirX * ap, 0, dirZ * ap)
+            local fwd = Vector3.new(-dirX, 0, -dirZ)
+            buildBanner(decorFolder, "WallBanner_" .. i, wallCenter + Vector3.new(0, 16, 0), fwd, false)
+        end
+    end
+
+    return folder
+end
+
+local Collapse = {}
+
+function Collapse.buildCorridor(parent, name, zStart, yStart, zEnd, yEnd, widthStart, widthEnd)
+
+    local folder = GeometryCore.newFolder(parent, name)
+
+    local t = 4
+
+    local length = zEnd - zStart
+
+    local zCenter = (zStart + zEnd) / 2
+
+    local yCenter = (yStart + yEnd) / 2
+
+    local pos = Vector3.new(0, yCenter, zCenter)
+
+    local floorWidth = (widthStart + widthEnd) / 2
+
+    
+
+    GeometryCore.newPart({
+
+        Name = "StructuralRamp", Size = Vector3.new(floorWidth, yEnd - yStart, length),
+
+        CFrame = CFrame.new(pos), Material = MAT.floor, Color = COLOR.floor, Parent = folder
+
+    }, "structural")
+
+    
+
+    local height = 24
+
+    GeometryCore.newPart({
+
+        Name = "WallL", Size = Vector3.new(t, height, length),
+
+        CFrame = CFrame.new(pos + Vector3.new(-floorWidth/2 - t/2, height/2, 0)),
+
+        Material = MAT.wall, Color = COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    GeometryCore.newPart({
+
+        Name = "WallR", Size = Vector3.new(t, height, length),
+
+        CFrame = CFrame.new(pos + Vector3.new(floorWidth/2 + t/2, height/2, 0)),
+
+        Material = MAT.wall, Color = COLOR.wall, Parent = folder
+
+    }, "structural")
+
+    return folder
+
+end
+
+function Collapse.buildAll(parent)
+
+    local folder = GeometryCore.newFolder(parent, "Transitions")
+
+    local tAB = MapManager.rooms.TransAB
+
+    Collapse.buildCorridor(folder, "TransAB", tAB.zStart, tAB.yStart, tAB.zEnd, tAB.yEnd, tAB.width, tAB.width)
+
+    return folder
+
+end
+
+------------------------------------------------------------------------
+
+-- 9. ROOM A VISUAL & GAMEPLAY PASS (5 ZONES)
+
+------------------------------------------------------------------------
+
+
+local function getRight(forward)
+    return Vector3.new(forward.Z, 0, -forward.X)
+end
+
+local function orientedCFrame(position, forward)
+    local right = getRight(forward)
+    return CFrame.fromMatrix(position, right, Vector3.new(0, 1, 0), -forward)
+end
+
+local function horizontalAxisCFrame(position, axisDirection)
+    local flat = Vector3.new(axisDirection.X, 0, axisDirection.Z)
+    if flat.Magnitude == 0 then flat = Vector3.new(0, 0, -1) end
+    flat = flat.Unit
+    return CFrame.fromMatrix(position, flat, Vector3.new(0, 1, 0))
+end
+
+local function unitXZ(vector)
+    local flat = Vector3.new(vector.X, 0, vector.Z)
+    if flat.Magnitude == 0 then return Vector3.new(0, 0, -1) end
+    return flat.Unit
+end
+
+buildSpikeTrap = function(parent, name, floorPosition, forward, skipTravelGuides)
+    -- Ported from the Room A reference draft: full mechanical detail --
+    -- stone housing rings, carved corner stones, a geared medallion,
+    -- guide rails, coiled springs, and genuinely tapering segmented
+    -- spikes (stacked shrinking cylinders = a real point), instead of
+    -- the earlier flat wedge-pair spikes. A transparent RootPart is the
+    -- Model's PrimaryPart so buildCeilingSpike/buildWallSpike can
+    -- rotate the whole assembly in place via PivotTo.
+    local fwd = unitXZ(forward)
+    local right = GeometryCore.getRight(fwd)
+    local t = CONFIG.spikeTrap
+    local trap = Instance.new("Model")
+    trap.Name = name
+    trap.Parent = parent
+
+    local rootPart = GeometryCore.newPart({
+        Name = "RootPart",
+        Size = Vector3.new(1, 1, 1),
+        CFrame = GeometryCore.orientedCFrame(floorPosition, fwd),
+        Transparency = 1,
+        CanCollide = false,
+        CanQuery = false,
+        Parent = trap,
+    })
+    trap.PrimaryPart = rootPart
+
+    ------------------------------------------------------------
+    -- Stone housing
+    ------------------------------------------------------------
+    local lowOuterWidth = t.width + t.housingMargin * 2
+    local lowOuterDepth = t.depth + t.housingMargin * 2
+    local capOuterWidth = t.width + t.housingMargin
+    local capOuterDepth = t.depth + t.housingMargin
+
+    local function buildHousingRing(ringName, outerWidth, outerDepth, ringThickness, yCenter, ringHeight, material, color)
+        GeometryCore.addOrientedPart(trap, ringName .. "_Front", Vector3.new(outerWidth, ringHeight, ringThickness),
+            floorPosition + fwd * (outerDepth / 2 - ringThickness / 2) + Vector3.new(0, yCenter, 0),
+            fwd, material, color)
+        GeometryCore.addOrientedPart(trap, ringName .. "_Back", Vector3.new(outerWidth, ringHeight, ringThickness),
+            floorPosition - fwd * (outerDepth / 2 - ringThickness / 2) + Vector3.new(0, yCenter, 0),
+            fwd, material, color)
+        GeometryCore.addOrientedPart(trap, ringName .. "_Left", Vector3.new(ringThickness, ringHeight, outerDepth - ringThickness * 2),
+            floorPosition - right * (outerWidth / 2 - ringThickness / 2) + Vector3.new(0, yCenter, 0),
+            fwd, material, color)
+        GeometryCore.addOrientedPart(trap, ringName .. "_Right", Vector3.new(ringThickness, ringHeight, outerDepth - ringThickness * 2),
+            floorPosition + right * (outerWidth / 2 - ringThickness / 2) + Vector3.new(0, yCenter, 0),
+            fwd, material, color)
+    end
+
+    buildHousingRing("HousingLow", lowOuterWidth, lowOuterDepth, t.housingMargin * 0.85,
+        t.housingLowHeight / 2, t.housingLowHeight, STONE, C_ANCIENT_STONE)
+    buildHousingRing("HousingCap", capOuterWidth, capOuterDepth, t.housingMargin * 0.6,
+        t.housingLowHeight + t.housingCapHeight / 2, t.housingCapHeight, STONE, C_STONE)
+
+    local housingCorners = {
+        floorPosition - right * (lowOuterWidth / 2 - 0.9) - fwd * (lowOuterDepth / 2 - 0.9),
+        floorPosition + right * (lowOuterWidth / 2 - 0.9) - fwd * (lowOuterDepth / 2 - 0.9),
+        floorPosition - right * (lowOuterWidth / 2 - 0.9) + fwd * (lowOuterDepth / 2 - 0.9),
+        floorPosition + right * (lowOuterWidth / 2 - 0.9) + fwd * (lowOuterDepth / 2 - 0.9),
+    }
+
+    for index, cornerPos in ipairs(housingCorners) do
+        GeometryCore.newPart({
+            Name = "HousingCornerStone_" .. index,
+            Size = Vector3.new(1.8, t.housingLowHeight + t.housingCapHeight + 0.3, 1.8),
+            CFrame = CFrame.new(cornerPos + Vector3.new(0, (t.housingLowHeight + t.housingCapHeight) / 2, 0)),
+            Material = STONE,
+            Color = C_ANCIENT_STONE,
+            Parent = trap,
+        })
+    end
+
+    local gearCenter = floorPosition
+        + fwd * (lowOuterDepth / 2 - t.housingMargin * 0.425)
+        + Vector3.new(0, t.housingLowHeight * 0.55, 0)
+    local gearAxis = horizontalAxisCFrame(gearCenter, fwd)
+
+    GeometryCore.newPart({
+        Name = "GearMedallion_Hub",
+        Shape = Enum.PartType.Cylinder,
+        Size = Vector3.new(0.3, 1.4, 1.4),
+        CFrame = gearAxis,
+        Material = METAL,
+        Color = C_IRON,
+        Parent = trap,
+    })
+
+    for toothIndex = 0, 9 do
+        local toothAngle = math.rad(toothIndex * 36)
+        GeometryCore.newPart({
+            Name = "GearMedallion_Tooth" .. toothIndex,
+            Size = Vector3.new(0.32, 0.4, 0.4),
+            CFrame = gearAxis * CFrame.Angles(toothAngle, 0, 0) * CFrame.new(0, 0.85, 0),
+            Material = METAL,
+            Color = C_IRON,
+            Parent = trap,
+        })
+    end
+
+    ------------------------------------------------------------
+    -- Mechanism
+    ------------------------------------------------------------
+    GeometryCore.newPart({
+        Name = "PitFloor",
+        Size = Vector3.new(t.width, 0.4, t.depth),
+        CFrame = GeometryCore.orientedCFrame(floorPosition + Vector3.new(0, -t.pitDepth - 0.2, 0), fwd),
+        Material = SPIKE_STEEL,
+        Color = C_SPIKE_STEEL,
+        Parent = trap,
+    })
+
+    GeometryCore.addOrientedPart(trap, "FrameFront", Vector3.new(t.width + t.frameThickness * 2, 0.3, t.frameThickness),
+        floorPosition + fwd * (t.depth / 2 + t.frameThickness / 2) + Vector3.new(0, 0.15, 0),
+        fwd, METAL, C_IRON)
+    GeometryCore.addOrientedPart(trap, "FrameBack", Vector3.new(t.width + t.frameThickness * 2, 0.3, t.frameThickness),
+        floorPosition - fwd * (t.depth / 2 + t.frameThickness / 2) + Vector3.new(0, 0.15, 0),
+        fwd, METAL, C_IRON)
+    GeometryCore.addOrientedPart(trap, "FrameLeft", Vector3.new(t.frameThickness, 0.3, t.depth),
+        floorPosition - right * (t.width / 2 + t.frameThickness / 2) + Vector3.new(0, 0.15, 0),
+        fwd, METAL, C_IRON)
+    GeometryCore.addOrientedPart(trap, "FrameRight", Vector3.new(t.frameThickness, 0.3, t.depth),
+        floorPosition + right * (t.width / 2 + t.frameThickness / 2) + Vector3.new(0, 0.15, 0),
+        fwd, METAL, C_IRON)
+
+    local frameCorners = {
+        floorPosition - right * (t.width / 2 + t.frameThickness / 2) - fwd * (t.depth / 2 + t.frameThickness / 2),
+        floorPosition + right * (t.width / 2 + t.frameThickness / 2) - fwd * (t.depth / 2 + t.frameThickness / 2),
+        floorPosition - right * (t.width / 2 + t.frameThickness / 2) + fwd * (t.depth / 2 + t.frameThickness / 2),
+        floorPosition + right * (t.width / 2 + t.frameThickness / 2) + fwd * (t.depth / 2 + t.frameThickness / 2),
+    }
+
+    for index, cornerPos in ipairs(frameCorners) do
+        GeometryCore.newPart({
+            Name = "FrameBracket_" .. index,
+            Size = Vector3.new(0.75, 0.55, 0.75),
+            CFrame = CFrame.new(cornerPos + Vector3.new(0, 0.3, 0)),
+            Material = METAL,
+            Color = C_IRON,
+            Parent = trap,
+        })
+        for boltIndex = 1, 2 do
+            local boltRight = boltIndex == 1 and 0.22 or -0.22
+            local boltForward = boltIndex == 1 and -0.22 or 0.22
+            GeometryCore.newPart({
+                Name = "FrameBolt_" .. index .. "_" .. boltIndex,
+                Shape = Enum.PartType.Cylinder,
+                Size = Vector3.new(0.22, 0.24, 0.24),
+                CFrame = CFrame.new(cornerPos + right * boltRight + fwd * boltForward + Vector3.new(0, 0.62, 0))
+                    * CFrame.Angles(0, 0, math.rad(90)),
+                Material = METAL,
+                Color = C_IRON,
+                Parent = trap,
+            })
+        end
+    end
+
+    -- Guide rails span the mechanism's vertical travel distance -- only
+    -- meaningful (and only kept short enough to look right) on a floor
+    -- trap. Rotated variants skip them; see skipTravelGuides above.
+    local railInset = 0.55
+    if not skipTravelGuides then
+        local railHeight = t.pitDepth + t.extendOffsetY + 0.6
+        local railCorners = {
+            floorPosition - right * (t.width / 2 - railInset) - fwd * (t.depth / 2 - railInset),
+            floorPosition + right * (t.width / 2 - railInset) - fwd * (t.depth / 2 - railInset),
+            floorPosition - right * (t.width / 2 - railInset) + fwd * (t.depth / 2 - railInset),
+            floorPosition + right * (t.width / 2 - railInset) + fwd * (t.depth / 2 - railInset),
+        }
+
+        for index, cornerPos in ipairs(railCorners) do
+            GeometryCore.newPart({
+                Name = "GuideRail_" .. index,
+                Shape = Enum.PartType.Cylinder,
+                Size = Vector3.new(railHeight, 0.22, 0.22),
+                CFrame = CFrame.new(cornerPos + Vector3.new(0, railHeight / 2 - t.pitDepth, 0))
+                    * CFrame.Angles(0, 0, math.rad(90)),
+                Material = METAL,
+                Color = C_IRON,
+                Parent = trap,
+            })
+        end
+    end
+
+    local springInset = railInset + 0.85
+    local springCorners = {
+        floorPosition - right * (t.width / 2 - springInset) - fwd * (t.depth / 2 - springInset),
+        floorPosition + right * (t.width / 2 - springInset) - fwd * (t.depth / 2 - springInset),
+        floorPosition - right * (t.width / 2 - springInset) + fwd * (t.depth / 2 - springInset),
+        floorPosition + right * (t.width / 2 - springInset) + fwd * (t.depth / 2 - springInset),
+    }
+
+    for cornerIndex, cornerPos in ipairs(springCorners) do
+        for coil = 1, t.springCoils do
+            local coilY = -t.pitDepth + 0.3 + (coil - 1) * 0.34
+            GeometryCore.newPart({
+                Name = "Spring_" .. cornerIndex .. "_Coil" .. coil,
+                Shape = Enum.PartType.Cylinder,
+                Size = Vector3.new(0.16, 0.85, 0.85),
+                CFrame = CFrame.new(cornerPos + Vector3.new(0, coilY, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+                Material = METAL,
+                Color = C_SPRING,
+                Parent = trap,
+            })
+        end
+    end
+
+    -- Diagonal under-pit support braces -- same reasoning: fine lying
+    -- flat under a floor trap, but they read as long stray rods once
+    -- the whole trap is rotated onto a wall, so skip on rotated variants.
+    if not skipTravelGuides then
+        local supportY = -t.pitDepth - 0.05
+        local diagLength = math.sqrt(t.width ^ 2 + t.depth ^ 2) * 0.88
+        GeometryCore.addOrientedPart(trap, "SupportBrace1", Vector3.new(diagLength, 0.3, 0.5),
+            floorPosition + Vector3.new(0, supportY, 0), unitXZ(right + fwd),
+            METAL, C_IRON)
+        GeometryCore.addOrientedPart(trap, "SupportBrace2", Vector3.new(diagLength, 0.3, 0.5),
+            floorPosition + Vector3.new(0, supportY, 0), unitXZ(right - fwd),
+            METAL, C_IRON)
+    end
+
+    local plankSpan = (t.depth - t.plankGap * (t.plankCount - 1)) / t.plankCount
+    local plankOffsets = {}
+
+    for plankIndex = 0, t.plankCount - 1 do
+        local plankOffset = -t.depth / 2 + plankSpan / 2 + plankIndex * (plankSpan + t.plankGap)
+        plankOffsets[plankIndex + 1] = plankOffset
+        GeometryCore.addOrientedPart(trap, "Plank_" .. (plankIndex + 1), Vector3.new(t.width, 0.5, plankSpan),
+            floorPosition + fwd * plankOffset, fwd, WOOD_PLANKS, C_TRAP_WOOD)
+    end
+
+    ------------------------------------------------------------
+    -- Moving spike bed -- tapering segmented spikes (stacked shrinking
+    -- cylinders) instead of flat wedges: a genuinely pointed silhouette.
+    ------------------------------------------------------------
+    local spikeBed = Instance.new("Model")
+    spikeBed.Name = "SpikeBed"
+    spikeBed.Parent = trap
+
+    local bedPlate = GeometryCore.newPart({
+        Name = "BedPlate",
+        Size = Vector3.new(t.width - 1, 0.3, t.depth - 1),
+        CFrame = GeometryCore.orientedCFrame(floorPosition + Vector3.new(0, t.restOffsetY, 0), fwd),
+        Material = SPIKE_STEEL,
+        Color = C_SPIKE_STEEL,
+        Parent = spikeBed,
+    })
+    spikeBed.PrimaryPart = bedPlate
+
+    local colSpacing = t.width / (t.spikeCols + 1)
+    for col = 1, t.spikeCols do
+        local localRight = -t.width / 2 + colSpacing * col
+        for row = 1, #plankOffsets - 1 do
+            local localForward = (plankOffsets[row] + plankOffsets[row + 1]) / 2
+            local spikeBase = floorPosition
+                + right * localRight
+                + fwd * localForward
+                + Vector3.new(0, t.restOffsetY + 0.15, 0)
+            local segHeight = t.spikeHeight / t.spikeSegments
+
+            for seg = 1, t.spikeSegments do
+                local segRadius = t.spikeBaseRadius * (1 - (seg - 1) / t.spikeSegments)
+                local nextRadius = t.spikeBaseRadius * (1 - seg / t.spikeSegments)
+                local segRadiusAvg = math.max((segRadius + nextRadius) / 2, 0.03)
+
+                GeometryCore.newPart({
+                    Name = string.format("Spike_%d_%d_Seg%d", col, row, seg),
+                    Shape = Enum.PartType.Cylinder,
+                    Size = Vector3.new(segHeight + 0.06, segRadiusAvg * 2, segRadiusAvg * 2),
+                    CFrame = CFrame.new(spikeBase + Vector3.new(0, segHeight * (seg - 0.5), 0))
+                        * CFrame.Angles(0, 0, math.rad(90)),
+                    Material = SPIKE_STEEL,
+                    Color = C_SPIKE_STEEL,
+                    Parent = spikeBed,
+                })
+            end
+        end
+    end
+
+    trap:SetAttribute("Kind", "SpikeTrap")
+    trap:SetAttribute("CycleSeconds", t.cycleSeconds)
+    trap:SetAttribute("Damage", t.damage)
+    trap:SetAttribute("RestOffsetY", t.restOffsetY)
+    trap:SetAttribute("ExtendOffsetY", t.extendOffsetY)
+    CollectionService:AddTag(trap, "SpikeTrap")
+
+    return trap
+end
+
+local function buildSwingingBlade(parent, name, pivotPosition, forward)
+    -- Ported from the Room A reference draft: separate ceiling support
+    -- posts + mount plates, a visible chain link run down to the pivot,
+    -- a ball pivot hub, and a counterweight arm opposite the blade --
+    -- reads as a real mechanical assembly, not a disc on a stick.
+    local b = CONFIG.swingingBlade
+    local fwd = unitXZ(forward)
+    local right = GeometryCore.getRight(fwd)
+    local blade = Instance.new("Model")
+    blade.Name = name
+    blade.Parent = parent
+
+    local postForwardOffset = b.axleLength / 2
+    for _, side in ipairs({ -1, 1 }) do
+        local postTop = pivotPosition + fwd * (postForwardOffset * side) + Vector3.new(0, b.mountDrop, 0)
+        local postBottom = pivotPosition + fwd * (postForwardOffset * side)
+
+        GeometryCore.newPart({
+            Name = "SupportPost_" .. (side > 0 and "Front" or "Back"),
+            Size = Vector3.new(0.55, b.mountDrop, 0.55),
+            CFrame = CFrame.new((postTop + postBottom) / 2),
+            Material = METAL,
+            Color = C_IRON,
+            Parent = blade,
+        })
+        GeometryCore.newPart({
+            Name = "MountPlate_" .. (side > 0 and "Front" or "Back"),
+            Size = Vector3.new(1.1, 0.3, 1.1),
+            CFrame = CFrame.new(postTop + Vector3.new(0, -0.1, 0)),
+            Material = METAL,
+            Color = C_IRON,
+            Parent = blade,
+        })
+    end
+
+    GeometryCore.newPart({
+        Name = "Axle",
+        Shape = Enum.PartType.Cylinder,
+        Size = Vector3.new(b.axleLength + 0.6, 0.3, 0.3),
+        CFrame = horizontalAxisCFrame(pivotPosition, fwd),
+        Material = METAL,
+        Color = C_IRON,
+        Parent = blade,
+    })
+
+    for linkIndex = 1, b.chainLinks do
+        local linkY = pivotPosition.Y + 0.5 + (linkIndex - 1) * 0.55
+        GeometryCore.newPart({
+            Name = "ChainLink_" .. linkIndex,
+            Size = linkIndex % 2 == 0 and Vector3.new(0.55, 0.5, 0.22) or Vector3.new(0.22, 0.5, 0.55),
+            CFrame = CFrame.new(pivotPosition.X, linkY, pivotPosition.Z),
+            Material = METAL,
+            Color = C_IRON,
+            Parent = blade,
+        })
+    end
+
+    local pivot = Instance.new("Model")
+    pivot.Name = "Pivot"
+    pivot.Parent = blade
+
+    local pivotHub = GeometryCore.newPart({
+        Name = "PivotHub",
+        Shape = Enum.PartType.Ball,
+        Size = Vector3.new(1.1, 1.1, 1.1),
+        CFrame = CFrame.new(pivotPosition),
+        Material = METAL,
+        Color = C_IRON,
+        Parent = pivot,
+    })
+    pivot.PrimaryPart = pivotHub
+
+    local bladeCenter = pivotPosition - Vector3.new(0, b.armLength, 0)
+    GeometryCore.newPart({
+        Name = "Arm",
+        Size = Vector3.new(0.4, b.armLength, 0.4),
+        CFrame = CFrame.new((pivotPosition + bladeCenter) / 2),
+        Material = METAL,
+        Color = C_IRON,
+        Parent = pivot,
+    })
+
+    local bladeAxis = horizontalAxisCFrame(bladeCenter, fwd)
+    GeometryCore.newPart({
+        Name = "BladeHub",
+        Shape = Enum.PartType.Cylinder,
+        Size = Vector3.new(0.65, 1.7, 1.7),
+        CFrame = bladeAxis,
+        Material = METAL,
+        Color = C_IRON,
+        Parent = pivot,
+    })
+
+    GeometryCore.newPart({
+        Name = "BladeDisc",
+        Shape = Enum.PartType.Cylinder,
+        Size = Vector3.new(0.35, b.bladeRadius * 2, b.bladeRadius * 2),
+        CFrame = bladeAxis,
+        Material = SPIKE_STEEL,
+        Color = C_SPIKE_STEEL,
+        Parent = pivot,
+    })
+
+    for toothIndex = 0, 15 do
+        local toothAngle = math.rad(toothIndex * 22.5)
+        GeometryCore.newPart({
+            Name = "BladeTooth_" .. toothIndex,
+            Size = Vector3.new(0.3, 0.5, 0.42),
+            CFrame = bladeAxis * CFrame.Angles(toothAngle, 0, 0) * CFrame.new(0, b.bladeRadius - 0.1, 0),
+            Material = SPIKE_STEEL,
+            Color = C_SPIKE_STEEL,
+            Parent = pivot,
+        })
+    end
+
+    local counterCenter = pivotPosition + Vector3.new(0, b.counterArmLength, 0)
+    GeometryCore.newPart({
+        Name = "CounterArm",
+        Size = Vector3.new(0.32, b.counterArmLength, 0.32),
+        CFrame = CFrame.new((pivotPosition + counterCenter) / 2),
+        Material = METAL,
+        Color = C_IRON,
+        Parent = pivot,
+    })
+    GeometryCore.newPart({
+        Name = "Counterweight",
+        Shape = Enum.PartType.Ball,
+        Size = Vector3.new(b.counterweightRadius * 2, b.counterweightRadius * 2, b.counterweightRadius * 2),
+        CFrame = CFrame.new(counterCenter),
+        Material = SPIKE_STEEL,
+        Color = C_COUNTERWEIGHT,
+        Parent = pivot,
+    })
+
+    blade:SetAttribute("Kind", "SwingingBlade")
+    blade:SetAttribute("SwingAxis", fwd)
+    blade:SetAttribute("SwingDegrees", b.swingDegrees)
+    blade:SetAttribute("PeriodSeconds", b.periodSeconds)
+    blade:SetAttribute("Damage", b.damage)
+    CollectionService:AddTag(blade, "SwingingBlade")
+
+    return blade
+end
+
+local function buildPortcullisDoor(parent, name, floorPosition, forward, doorWidth, roomHeight)
+    local right = GeometryCore.getRight(forward)
+    local d = CONFIG.portcullis
+    local assembly = Instance.new("Folder")
+    assembly.Name = name
+    assembly.Parent = parent
+
+    local trackInset = doorWidth / 2 + 0.5
+    local trackHeight = roomHeight - 0.5
+
+    for _, side in ipairs({ -1, 1 }) do
+        local sideName = side < 0 and "Left" or "Right"
+        GeometryCore.addOrientedPart(assembly, "Jamb" .. sideName, Vector3.new(1.6, trackHeight, 2.2),
+            floorPosition + right * (trackInset * side) + Vector3.new(0, trackHeight / 2, 0),
+            forward, STONE, C_DARK_STONE)
+        GeometryCore.addOrientedPart(assembly, "Track" .. sideName, Vector3.new(0.4, trackHeight, 0.6),
+            floorPosition + right * ((trackInset - 0.9) * side) + Vector3.new(0, trackHeight / 2, 0),
+            forward, METAL, C_IRON)
+    end
+
+    GeometryCore.addOrientedPart(assembly, "Lintel", Vector3.new(doorWidth + 3.6, 2.2, 2.6),
+        floorPosition + Vector3.new(0, roomHeight - 1.1, 0),
+        forward, STONE, C_DARK_STONE)
+
+    for _, side in ipairs({ -1, 1 }) do
+        local sideName = side < 0 and "Left" or "Right"
+        local housingCenter = floorPosition + right * (trackInset * side) + Vector3.new(0, roomHeight - 2.0, 0)
+        GeometryCore.addOrientedPart(assembly, "CounterHousing" .. sideName, Vector3.new(1.9, 2.6, 2.4),
+            housingCenter, forward, STONE, C_STONE)
+        GeometryCore.newPart({
+            Name = "CounterWeight" .. sideName,
+            Size = Vector3.new(1.0, 1.0, 1.0),
+            CFrame = CFrame.new(housingCenter + Vector3.new(0, -0.4, 0)),
+            Material = METAL,
+            Color = C_IRON,
+            Parent = assembly,
+        })
+    end
+
+    local leaf = Instance.new("Model")
+    leaf.Name = "Leaf"
+    leaf.Parent = assembly
+
+    local leafHeight = roomHeight * d.leafHeightRatio
+    local leafWidth = doorWidth - 0.6
+    local openCenterY = roomHeight - leafHeight / 2 - 0.4
+    local closedCenterY = leafHeight / 2 + 0.1
+    local leafCenter = floorPosition + Vector3.new(0, openCenterY, 0)
+
+    local barSpacing = leafWidth / (d.verticalBars + 1)
+    local primaryBar = nil
+
+    for barIndex = 1, d.verticalBars do
+        local barRight = -leafWidth / 2 + barSpacing * barIndex
+        local bar = GeometryCore.addOrientedPart(leaf, "VerticalBar_" .. barIndex, Vector3.new(0.4, leafHeight - 0.8, 0.4),
+            leafCenter + right * barRight + Vector3.new(0, -0.4, 0), forward,
+            METAL, C_IRON)
+        primaryBar = primaryBar or bar
+
+        local segHeight = 0.9 / 3
+        for seg = 1, 3 do
+            local segRadiusAvg = math.max(0.24 * (1 - (seg - 1) / 3), 0.03)
+            GeometryCore.newPart({
+                Name = string.format("BarSpike_%d_%d", barIndex, seg),
+                Shape = Enum.PartType.Cylinder,
+                Size = Vector3.new(segHeight + 0.05, segRadiusAvg * 2, segRadiusAvg * 2),
+                CFrame = CFrame.new(leafCenter + right * barRight
+                    + Vector3.new(0, -leafHeight / 2 + segHeight * (seg - 0.5), 0))
+                    * CFrame.Angles(0, 0, math.rad(90)),
+                Material = METAL,
+                Color = C_SPIKE,
+                Parent = leaf,
+            })
+        end
+    end
+
+    for crossIndex = 1, d.horizontalBars do
+        local crossY = -leafHeight / 2 + (leafHeight / (d.horizontalBars + 1)) * crossIndex
+        GeometryCore.addOrientedPart(leaf, "CrossBar_" .. crossIndex, Vector3.new(leafWidth, 0.35, 0.35),
+            leafCenter + Vector3.new(0, crossY, 0), forward,
+            METAL, C_IRON)
+    end
+
+    leaf.PrimaryPart = primaryBar
+    assembly:SetAttribute("Kind", "SealingDoor")
+    assembly:SetAttribute("OpenOffsetY", openCenterY)
+    assembly:SetAttribute("ClosedOffsetY", closedCenterY)
+    assembly:SetAttribute("TriggerType", "CrossDistance")
+    CollectionService:AddTag(assembly, "SealingDoor")
+
+    return assembly
+end
+
+local function buildCeilingSpike(parent, name, centerPosition, forward)
+    local trap = buildSpikeTrap(parent, name, centerPosition, forward, true)
+    trap:PivotTo(trap:GetPivot() * CFrame.Angles(0, 0, math.pi))
+    return trap
+end
+
+local function buildWallSpike(parent, name, centerPosition, forward, isRightWall)
+    local trap = buildSpikeTrap(parent, name, centerPosition, forward, true)
+    local angle = isRightWall and (math.pi / 2) or (-math.pi / 2)
+    trap:PivotTo(trap:GetPivot() * CFrame.Angles(0, 0, angle))
+    return trap
+end
+
+local function generateRoomAObstacleCourse(room, entrancePosition, forward, length, width, height)
+    local right = GeometryCore.getRight(forward)
+    local leftWallOrigin = entrancePosition - right * (width / 2)
+    local rightWallOrigin = entrancePosition + right * (width / 2)
+    
+    local hazardRandom = Random.new(20260931)
+
+    local trapIndex = 1
+    local bladeIndex = 1
+    local bladePivotY = height - CONFIG.swingingBlade.mountDrop
+    local hazardEnd = length - 40
+    
+    local trapFootprintDepth = CONFIG.spikeTrap.depth + CONFIG.spikeTrap.housingMargin * 2
+    local trapClearance = trapFootprintDepth + 5
+
+    local function nextSpacing()
+        return hazardRandom:NextInteger(10, 14)
+    end
+
+    local function placeBlade(dist, lateralOffset)
+        lateralOffset = lateralOffset or 0
+        local blade = buildSwingingBlade(
+            room,
+            "SwingingBlade_" .. bladeIndex,
+            entrancePosition + forward * dist + right * lateralOffset + Vector3.new(0, bladePivotY, 0),
+            forward
+        )
+        blade:SetAttribute("PhaseOffset", hazardRandom:NextNumber())
+        bladeIndex = bladeIndex + 1
+        return blade
+    end
+
+    local function placeFloor(dist, lateralOffset)
+        lateralOffset = lateralOffset or 0
+        buildSpikeTrap(
+            room,
+            "SpikeTrap_" .. trapIndex,
+            entrancePosition + forward * dist + right * lateralOffset,
+            forward
+        )
+        trapIndex = trapIndex + 1
+    end
+
+    local function placeCeiling(dist)
+        buildCeilingSpike(
+            room,
+            "CeilingSpike_" .. trapIndex,
+            entrancePosition + forward * dist + Vector3.new(0, height, 0),
+            forward
+        )
+        trapIndex = trapIndex + 1
+    end
+
+    local function placeWallLeft(dist)
+        buildWallSpike(
+            room,
+            "WallSpike_" .. trapIndex,
+            leftWallOrigin + forward * dist + Vector3.new(0, height / 2 - 3, 0),
+            forward,
+            false
+        )
+        trapIndex = trapIndex + 1
+    end
+
+    local function placeWallRight(dist)
+        buildWallSpike(
+            room,
+            "WallSpike_" .. trapIndex,
+            rightWallOrigin + forward * dist + Vector3.new(0, height / 2 - 3, 0),
+            forward,
+            true
+        )
+        trapIndex = trapIndex + 1
+    end
+
+    local encounterHasTrap = {
+        floor = true, ceiling = true, wallLeft = true, wallRight = true,
+        blade = false, floorBlade = true, ceilingBlade = true, opposingWalls = true,
+        crushRight = true, crushLeft = true, doubleCeiling = true,
+    }
+
+    local encounterWeights = {
+        { id = "floor", weight = 18 }, { id = "ceiling", weight = 18 },
+        { id = "wallLeft", weight = 14 }, { id = "wallRight", weight = 14 },
+        { id = "blade", weight = 12 }, { id = "floorBlade", weight = 10 },
+        { id = "ceilingBlade", weight = 8 }, { id = "opposingWalls", weight = 10 },
+        { id = "crushRight", weight = 5 }, { id = "crushLeft", weight = 5 },
+        { id = "doubleCeiling", weight = 6 },
+    }
+
+    local function pickEncounterId()
+        local totalWeight = 0
+        for _, entry in ipairs(encounterWeights) do totalWeight = totalWeight + entry.weight end
+        local roll = hazardRandom:NextNumber() * totalWeight
+        local cumulative = 0
+        for _, entry in ipairs(encounterWeights) do
+            cumulative = cumulative + entry.weight
+            if roll <= cumulative then return entry.id end
+        end
+        return encounterWeights[1].id
+    end
+    
+    local function randRightOffset()
+        return hazardRandom:NextInteger(-6, 6)
+    end
+
+    local encounters = {
+        floor = function(dist) placeFloor(dist, randRightOffset()) end,
+        ceiling = function(dist) placeCeiling(dist) end,
+        wallLeft = function(dist) placeWallLeft(dist) end,
+        wallRight = function(dist) placeWallRight(dist) end,
+        blade = function(dist) placeBlade(dist, randRightOffset()) end,
+        floorBlade = function(dist) placeFloor(dist, randRightOffset()); placeBlade(dist, randRightOffset()) end,
+        ceilingBlade = function(dist) placeCeiling(dist); placeBlade(dist, randRightOffset()) end,
+        opposingWalls = function(dist) placeWallLeft(dist); placeWallRight(dist) end,
+        crushRight = function(dist) placeWallRight(dist); placeFloor(dist, -6) end,
+        crushLeft = function(dist) placeWallLeft(dist); placeFloor(dist, 6) end,
+        doubleCeiling = function(dist)
+            placeCeiling(dist)
+            if dist + trapClearance < hazardEnd then placeCeiling(dist + trapClearance) end
+        end,
+    }
+
+    local currentDist = 30
+    while currentDist < hazardEnd do
+        local encounterId = pickEncounterId()
+        encounters[encounterId](currentDist)
+        local spacing = nextSpacing()
+        if encounterHasTrap[encounterId] then
+            spacing = math.max(spacing, trapClearance)
+        end
+        currentDist = currentDist + spacing
+    end
+
+    buildPortcullisDoor(room, "ExitPortcullis", entrancePosition + forward * (length - 12), forward, width - 2, height)
+end
+
+local function animateSwingingBlades()
+    local startTime = os.clock()
+    RunService.Heartbeat:Connect(function()
+        local elapsed = os.clock() - startTime
+        for _, blade in ipairs(CollectionService:GetTagged("SwingingBlade")) do
+            local pivotModel = blade:FindFirstChild("Pivot")
+            if pivotModel and pivotModel.PrimaryPart then
+                local axis = blade:GetAttribute("SwingAxis")
+                local degrees = blade:GetAttribute("SwingDegrees")
+                local period = blade:GetAttribute("PeriodSeconds")
+                if axis and degrees and period and period > 0 then
+                    local amplitude = math.rad(degrees)
+                    local phaseOffset = blade:GetAttribute("PhaseOffset") or 0
+                    local angle = amplitude * math.sin((elapsed / period + phaseOffset) * (math.pi * 2))
+                    local pivotPosition = pivotModel.PrimaryPart.Position
+                    pivotModel:PivotTo(CFrame.new(pivotPosition) * CFrame.fromAxisAngle(axis, angle))
+                end
+            end
+        end
+    end)
+end
+
+local RoomA_VisualPass = {}
+
+local function addSlabFloor(parent, x, z, w, l)
+    local p = Instance.new("Part")
+    p.Name = "RaisedFloor"
+    p.Size = Vector3.new(w, 2, l)
+    p.CFrame = CFrame.new(x, -1, z)
+    p.Anchored = true
+    p.Material = Enum.Material.Cobblestone
+    p.Color = Color3.fromRGB(80, 85, 75) -- C_MOSSY
+    p.Parent = parent
+    GeometryCore.incrementCount("visual")
+    
+    if l >= 15 then
+        local numStrips = math.floor(l / 15)
+        for i = 1, numStrips do
+            local sz = z - l/2 + (i * 15)
+            if sz < z + l/2 - 1 then
+                local g = Instance.new("Part")
+                g.Name = "GroutStrip"
+                g.Size = Vector3.new(w, 0.1, 0.5)
+                g.CFrame = CFrame.new(x, 0.05, sz)
+                g.Anchored = true
+                g.CanCollide = false
+                g.Material = Enum.Material.Cobblestone
+                g.Color = Color3.fromRGB(50, 48, 53) -- C_DARK_STONE
+                g.Parent = parent
+                GeometryCore.incrementCount("visual")
+            end
+        end
+    end
+end
+
+function RoomA_VisualPass.build(parent)
+    local root = GeometryCore.newFolder(parent, "RoomA_VisualPass")
+    local length = CONFIG.roomA.length
+    local width = CONFIG.roomA.width
+    local height = 24
+    local CY = height
+    
+    -- Continuous mossy floor for the entire room (using length=200 for current architecture)
+    local actualLength = 250
+    addSlabFloor(root, 0, actualLength/2, width, actualLength)
+    
+        -- Ancient stone-brick ruined roof
+    local Roof = Instance.new("Folder"); Roof.Name = "Roof"; Roof.Parent = root
+    local rng = Random.new(12345)
+    local slabLength = 10
+    local numSlabs = math.floor(actualLength / slabLength)
+    
+    local function p(n, s, c, m, col, parent, canCol)
+        local pt = Instance.new("Part"); pt.Name = n; pt.Size = s; pt.CFrame = c; pt.Anchored = true; pt.CanCollide = (canCol ~= false)
+        pt.Material = m; pt.Color = col; pt.Parent = parent; GeometryCore.incrementCount("visual"); return pt
+    end
+    
+    local function addVines(parent, cframe, drop)
+        local vine = p("HangingVine", Vector3.new(0.5, drop, 0.5), cframe * CFrame.new(0, -drop/2, 0), Enum.Material.Grass, Color3.fromRGB(50, 100, 30), parent, false)
+    end
+    
+    for i = 0, numSlabs - 1 do
+        local sz = (i + 0.5) * slabLength
+        local sf = Instance.new("Folder"); sf.Name = "RoofSlab_" .. i; sf.Parent = Roof
+        
+        -- Base stone color (ancient stone-brick)
+        local stoneCol = Color3.fromRGB(115, 118, 125)
+        
+        -- Roughly 30% chance of a broken roof section
+        if rng:NextNumber() > 0.70 and sz > 30 and sz < actualLength - 40 then
+            -- Broken roof section (small irregular gaps)
+            p("BrokenSlab1", Vector3.new(width, 2, 4), CFrame.new(0, CY, sz - 3) * CFrame.Angles(0,0,0), Enum.Material.Cobblestone, stoneCol, sf, true)
+            p("BrokenSlab2", Vector3.new(width, 2, 4), CFrame.new(0, CY, sz + 3) * CFrame.Angles(0,0,0), Enum.Material.Cobblestone, stoneCol, sf, true)
+            
+            -- Jagged edge pieces
+            for j=1, 6 do
+                local rx = rng:NextNumber(-width/2 + 2, width/2 - 2)
+                local rz = sz + rng:NextNumber(-2, 2)
+                local rs = rng:NextNumber(2, 5)
+                local rRot = rng:NextNumber(-0.3, 0.3)
+                p("JaggedEdge_"..j, Vector3.new(rs, 2, rs), CFrame.new(rx, CY, rz) * CFrame.Angles(0, rRot, 0), Enum.Material.Cobblestone, stoneCol, sf, true)
+            end
+            
+            -- Hanging vines through the opening
+            if rng:NextNumber() > 0.5 then
+                for v=1, 3 do
+                    local vx = rng:NextNumber(-width/4, width/4)
+                    local vz = sz + rng:NextNumber(-2, 2)
+                    local vDrop = rng:NextNumber(4, 12)
+                    addVines(sf, CFrame.new(vx, CY, vz), vDrop)
+                end
+            end
+            
+            -- Sunlight shafts (Primary Environmental Lighting)
+            local sun = p("SkyOpening", Vector3.new(12, 0.5, 12), CFrame.new(0, CY+2, sz), Enum.Material.Neon, Color3.fromRGB(230, 240, 255), sf, false)
+            local sl = Instance.new("SpotLight")
+            sl.Color = Color3.fromRGB(255, 250, 240); sl.Range = 80; sl.Brightness = 6; sl.Angle = 140; sl.Face = Enum.NormalId.Bottom
+            sl.Shadows = true; sl.Parent = sun
+            local shaft = p("LightShaft", Vector3.new(10, 30, 10), CFrame.new(0, CY-15, sz), Enum.Material.Neon, Color3.fromRGB(255, 250, 240), sf, false)
+            shaft.Transparency = 0.85
+            
+            -- Rubble on the floor directly beneath illuminated by the sun
+            local rubbleFolder = Instance.new("Folder"); rubbleFolder.Name = "FallenRubble_"..i; rubbleFolder.Parent = Roof
+            for k=1, 6 do
+                local rx = rng:NextNumber(-8, 8)
+                local rz = sz + rng:NextNumber(-6, 6)
+                local rs = rng:NextNumber(2, 4)
+                local rRotX = rng:NextNumber(0, math.pi)
+                local rRotZ = rng:NextNumber(0, math.pi)
+                p("FallenChunk_"..k, Vector3.new(rs, rs*0.8, rs), CFrame.new(rx, 1, rz) * CFrame.Angles(rRotX, 0, rRotZ), Enum.Material.Cobblestone, stoneCol, rubbleFolder, false)
+            end
+        else
+            -- Intact roof slab
+            p("SolidSlab", Vector3.new(width + 4, 2, slabLength), CFrame.new(0, CY, sz), Enum.Material.Cobblestone, stoneCol, sf, true)
+        end
+    end
+    
+    -- Secondary Warm Illumination (Torches/Sconces)
+    local Torches = Instance.new("Folder"); Torches.Name = "Torches"; Torches.Parent = root
+    local torchSpacing = 30
+    local numTorches = math.floor(actualLength / torchSpacing)
+    for i = 1, numTorches - 1 do
+        local tz = i * torchSpacing
+        for _, side in ipairs({-1, 1}) do
+            local tf = Instance.new("Folder"); tf.Name = "Torch_" .. (side > 0 and "R" or "L"); tf.Parent = Torches
+            local tx = side * (width/2 - 1)
+            -- Sconce
+            p("Sconce", Vector3.new(1, 2, 1), CFrame.new(tx, 12, tz), Enum.Material.Wood, Color3.fromRGB(60, 40, 20), tf, false)
+            p("SconceBase", Vector3.new(1.5, 0.5, 1.5), CFrame.new(tx, 11, tz), Enum.Material.Metal, Color3.fromRGB(30, 30, 30), tf, false)
+            -- Flame part
+            local flame = p("Flame", Vector3.new(0.5, 0.5, 0.5), CFrame.new(tx, 13.5, tz), Enum.Material.Neon, Color3.fromRGB(255, 150, 50), tf, false)
+            -- PointLight
+            local pl = Instance.new("PointLight")
+            pl.Color = Color3.fromRGB(255, 160, 80); pl.Range = 35; pl.Brightness = 3; pl.Shadows = true; pl.Parent = flame
+        end
+    end
+    
+    -- Re-add GateAB Visuals
+    local gateVisual = Instance.new("Folder"); gateVisual.Name = "GateAB_Visual"; gateVisual.Parent = root
+    local gateZ = MapManager.rooms.GateAB.z
+    local function pG(n, s, c, m, col)
+        local pt = Instance.new("Part"); pt.Name = n; pt.Size = s; pt.CFrame = c; pt.Anchored = true
+        pt.Material = m; pt.Color = col; pt.Parent = gateVisual; GeometryCore.incrementCount("visual"); return pt
+    end
+    
+    -- Heavy Stone Portal Frame (Recessed)
+    pG("ColumnL", Vector3.new(3, 15, 3), CFrame.new(-7.5, 6.5, gateZ - 2), Enum.Material.Cobblestone, Color3.fromRGB(45, 42, 48))
+    pG("ColumnR", Vector3.new(3, 15, 3), CFrame.new(7.5, 6.5, gateZ - 2), Enum.Material.Cobblestone, Color3.fromRGB(45, 42, 48))
+    pG("ArchLintel", Vector3.new(18, 4, 3.5), CFrame.new(0, 15.5, gateZ - 2), Enum.Material.Cobblestone, Color3.fromRGB(40, 38, 42))
+    pG("Keystone", Vector3.new(4, 5, 4), CFrame.new(0, 15.5, gateZ - 1.8), Enum.Material.Cobblestone, Color3.fromRGB(35, 32, 38))
+    
+    pG("Threshold", Vector3.new(16, 1.5, 5), CFrame.new(0, -1.25, gateZ), Enum.Material.Cobblestone, Color3.fromRGB(40, 38, 43))
+
+    -- Detailed Heavy Wooden Double Door
+    local doorWidth = 6.4
+    local doorHeight = 14
+    local doorDepth = 1.2
+    local doorColor = Color3.fromRGB(40, 30, 20) -- Very dark aged wood
+    local ironColor = Color3.fromRGB(20, 22, 25) -- Dark oxidized iron
+    
+    -- Function to build one leaf
+    local function buildDoorLeaf(sideName, centerX, dirMultiplier)
+        local leafFolder = Instance.new("Folder"); leafFolder.Name = "DoorLeaf_" .. sideName; leafFolder.Parent = gateVisual
+        
+        -- Main Wood Base
+        local base = Instance.new("Part")
+        base.Name = "WoodBase"
+        base.Size = Vector3.new(doorWidth, doorHeight, doorDepth)
+        base.CFrame = CFrame.new(centerX, -0.5 + doorHeight/2, gateZ)
+        base.Anchored = true
+        base.Material = Enum.Material.Wood
+        base.Color = doorColor
+        base.Parent = leafFolder
+        GeometryCore.incrementCount("visual")
+        
+        -- Vertical Planks (visual detail)
+        local numPlanks = 5
+        for i = 1, numPlanks - 1 do
+            local pX = centerX - (doorWidth/2) + (doorWidth / numPlanks) * i
+            local seam = Instance.new("Part")
+            seam.Name = "PlankSeam_" .. i
+            seam.Size = Vector3.new(0.1, doorHeight, doorDepth + 0.1)
+            seam.CFrame = CFrame.new(pX, -0.5 + doorHeight/2, gateZ)
+            seam.Anchored = true
+            seam.Material = Enum.Material.Wood
+            seam.Color = Color3.fromRGB(20, 15, 10)
+            seam.Parent = leafFolder
+            GeometryCore.incrementCount("visual")
+        end
+        
+        -- Horizontal Iron Bands (Top, Middle, Bottom)
+        for _, yOffset in ipairs({2.5, doorHeight/2, doorHeight - 2.5}) do
+            local band = Instance.new("Part")
+            band.Name = "IronBand"
+            band.Size = Vector3.new(doorWidth + 0.1, 1, doorDepth + 0.2)
+            band.CFrame = CFrame.new(centerX, -0.5 + yOffset, gateZ)
+            band.Anchored = true
+            band.Material = Enum.Material.Metal
+            band.Color = ironColor
+            band.Parent = leafFolder
+            GeometryCore.incrementCount("visual")
+            
+            -- Iron Rivets/Studs on the band
+            for i = 1, 4 do
+                local rivetX = centerX - (doorWidth/2) + (doorWidth / 5) * i
+                local stud = Instance.new("Part")
+                stud.Name = "Stud"
+                stud.Size = Vector3.new(0.4, 0.4, doorDepth + 0.4)
+                stud.CFrame = CFrame.new(rivetX, -0.5 + yOffset, gateZ)
+                stud.Anchored = true
+                stud.Material = Enum.Material.DiamondPlate
+                stud.Color = Color3.fromRGB(10, 10, 15)
+                stud.Parent = leafFolder
+                GeometryCore.incrementCount("visual")
+            end
+        end
+        
+        -- Hinge Bar (Pivot edge)
+        local hinge = Instance.new("Part")
+        hinge.Name = "Hinge"
+        hinge.Size = Vector3.new(0.8, doorHeight, 0.8)
+        hinge.CFrame = CFrame.new(centerX + dirMultiplier * (doorWidth/2), -0.5 + doorHeight/2, gateZ)
+        hinge.Anchored = true
+        hinge.Material = Enum.Material.Metal
+        hinge.Color = ironColor
+        hinge.Parent = leafFolder
+        GeometryCore.incrementCount("visual")
+    end
+    
+    -- Left Leaf (Center is at -3.25)
+    buildDoorLeaf("L", -3.25, -1)
+    -- Right Leaf (Center is at 3.25)
+    buildDoorLeaf("R", 3.25, 1)
+    
+    -- Add Obstacles
+    local startPos = Vector3.new(0, 0, 0)
+    local forward = Vector3.new(0, 0, 1)
+    
+    -- Wrap generation in a protected call to avoid crashing if it fails
+    local success, err = pcall(function()
+        generateRoomAObstacleCourse(root, startPos, forward, actualLength, width, height)
+    end)
+    if not success then
+        warn("Failed to generate obstacle course: " .. tostring(err))
+    end
+end
+
+local Validation = {}
+
+function Validation.run()
+    print("--- Navigation Validation ---")
+    print("Room A Route Validation bypassed for procedural V2 obstacles.")
+    print("--- Validation Complete ---")
+end
+local function generateTrialChamberV4()
+
+    print("TrialChamberV4 Generator (Extended Stage 1A) starting...")
+
+    
+
+    local targetName = "TrialChamberGeneratedV5"
+
+    if workspace:FindFirstChild(targetName) then
+
+        workspace[targetName]:Destroy()
+
+    end
+
+    
+
+    MapManager.init()
+
+    local root = Instance.new("Model")
+
+    root.Name = targetName
+
+    root.Parent = workspace
+
+    
+
+    print("Building Forecourt & Phase 1A Structural Shells...")
+
+    EntryForecourt.build(root)
+
+    RoomA.build(root)
+
+    print("Building Clearance Chamber...")
+    ClearanceChamber.build(root)
+
+    Collapse.buildAll(root)
+
+    RoomB.build(root)
+
+    
+
+    print("Building Room A Visuals & 5-Zone Hazards...")
+
+    RoomA_VisualPass.build(root)
+
+    
+
+    print("--- Navigation Validation ---")
+
+    Validation.run()
+
+    print("--- Validation Complete ---")
+
+    print("Starting blade animations...")
+    animateSwingingBlades()
+
+    
+
+    print(targetName .. " Generation complete!")
+
+    print("Total BaseParts:", GeometryCore.partCount.total)
+
+    print("Structural Parts:", GeometryCore.partCount.structural)
+
+    print("Grounding Parts:", GeometryCore.partCount.grounding)
+
+    print("Visual Parts:", GeometryCore.partCount.visual)
+
+end
+
+generateTrialChamberV4()
