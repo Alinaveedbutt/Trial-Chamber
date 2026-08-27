@@ -1,0 +1,408 @@
+-- TrialChamberRespawn.lua
+-- Authoritative per-player room checkpoint + death respawn placement.
+--
+-- Studio setup (pick ONE):
+--   A) Script under ServerScriptService named TrialChamberRespawn
+--   B) ModuleScript under ServerScriptService — RevampV10 will require() it
+--
+-- API:
+--   _G.TrialChamberRespawn.setCheckpoint(player, "A"|"B"|"C")
+--   _G.TrialChamberRespawn.getCheckpoint(player)
+--   _G.TrialChamberRespawn.bindChamber(rootModel)
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local ROOM_ORDER = { A = 1, B = 2, C = 3, D = 4 }
+
+local ATTR_CHECKPOINT = "CurrentTrialRoom"
+local ATTR_RESPAWNING = "TrialRespawnPending"
+
+local chamberRoot = nil
+local playerConnections = {}
+local spawnByRoom = {} -- [ "A"|"B"|"C"|"D" ] = SpawnLocation
+
+local function findChamberRoot()
+	if chamberRoot and chamberRoot.Parent then
+		return chamberRoot
+	end
+	chamberRoot = Workspace:FindFirstChild("TrialChamberGeneratedV5_Sky")
+		or Workspace:FindFirstChild("TrialChamberActive")
+		or Workspace:FindFirstChild("TrialChamberV2")
+	return chamberRoot
+end
+
+local function normalizeRoomKey(roomKey)
+	if typeof(roomKey) ~= "string" then
+		return nil
+	end
+	local key = string.upper(string.sub(roomKey, 1, 1))
+	if ROOM_ORDER[key] then
+		return key
+	end
+	return nil
+end
+
+local function findCheckpointPart(roomKey)
+	local root = findChamberRoot()
+	if not root then
+		return nil
+	end
+
+	local preferredNames = {
+		A = { "RoomACheckpoint", "Checkpoint_RoomA", "TrialStartMarker" },
+		B = { "RoomBCheckpoint", "Checkpoint_RoomB" },
+		C = { "RoomCCheckpoint", "Checkpoint_RoomC" },
+		D = { "RoomDCheckpoint", "Checkpoint_RoomD" },
+	}
+
+	local names = preferredNames[roomKey]
+	if names then
+		for _, name in ipairs(names) do
+			local part = root:FindFirstChild(name, true)
+			if part and part:IsA("BasePart") then
+				return part
+			end
+		end
+	end
+
+	local folder = root:FindFirstChild("Checkpoints")
+	if folder then
+		local part = folder:FindFirstChild("Room" .. roomKey .. "Checkpoint")
+			or folder:FindFirstChild(roomKey)
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	end
+
+	return nil
+end
+
+-- Roblox-native spawn points so default respawn lands in the right room.
+local function ensureRoomSpawnLocation(roomKey, checkpointPart)
+	if not checkpointPart then
+		return nil
+	end
+
+	local existing = spawnByRoom[roomKey]
+	if existing and existing.Parent then
+		existing.CFrame = checkpointPart.CFrame + Vector3.new(0, 1, 0)
+		return existing
+	end
+
+	local name = "Room" .. roomKey .. "Spawn"
+	local spawn = checkpointPart.Parent and checkpointPart.Parent:FindFirstChild(name)
+	if not (spawn and spawn:IsA("SpawnLocation")) then
+		spawn = Instance.new("SpawnLocation")
+		spawn.Name = name
+		spawn.Size = Vector3.new(6, 1, 6)
+		spawn.Transparency = 1
+		spawn.CanCollide = false
+		spawn.Anchored = true
+		spawn.Duration = 0
+		spawn.Neutral = true
+		spawn.Enabled = true
+		spawn.Parent = checkpointPart.Parent or findChamberRoot()
+	end
+
+	spawn.CFrame = checkpointPart.CFrame + Vector3.new(0, 1, 0)
+	-- Keep enabled; Player.RespawnLocation selects which one is used.
+	spawn.Enabled = true
+	spawn.Neutral = true
+	spawn.Duration = 0
+	spawnByRoom[roomKey] = spawn
+	return spawn
+end
+
+local function rebuildSpawnLocations()
+	table.clear(spawnByRoom)
+	for _, key in ipairs({ "A", "B", "C", "D" }) do
+		local cp = findCheckpointPart(key)
+		if cp then
+			ensureRoomSpawnLocation(key, cp)
+		end
+	end
+end
+
+local function applyPlayerRespawnLocation(player, roomKey)
+	local key = normalizeRoomKey(roomKey) or "A"
+	local spawn = spawnByRoom[key] or ensureRoomSpawnLocation(key, findCheckpointPart(key))
+	if spawn then
+		player.RespawnLocation = spawn
+	end
+end
+
+local function inferRoomFromPosition(worldPos)
+	local root = findChamberRoot()
+	if not root or not worldPos then
+		return nil
+	end
+
+	-- Prefer closest checkpoint among those the player has "reached" by Z
+	-- (trial advances roughly +Z after PivotTo).
+	local bestKey, bestDist = nil, math.huge
+	for _, key in ipairs({ "A", "B", "C", "D" }) do
+		local cp = findCheckpointPart(key)
+		if cp then
+			-- Only consider rooms whose checkpoint is at or behind the player along Z
+			if worldPos.Z >= (cp.Position.Z - 8) then
+				local d = (Vector3.new(cp.Position.X, 0, cp.Position.Z) - Vector3.new(worldPos.X, 0, worldPos.Z)).Magnitude
+				-- Prefer higher rooms when distances are similar
+				local score = d - (ROOM_ORDER[key] or 0) * 5
+				if score < bestDist then
+					bestDist = score
+					bestKey = key
+				end
+			end
+		end
+	end
+
+	if bestKey then
+		return bestKey
+	end
+
+	-- Fallback: which room folder contains the player (AABB-ish via descendants)
+	for _, key in ipairs({ "C", "B", "A" }) do
+		local folder = root:FindFirstChild("Room" .. key)
+		if folder then
+			local ok, cf, size = pcall(function()
+				return folder:GetBoundingBox()
+			end)
+			if ok and cf and size then
+				local localPos = cf:PointToObjectSpace(worldPos)
+				if math.abs(localPos.X) <= size.X * 0.55
+					and math.abs(localPos.Y) <= size.Y * 0.7
+					and math.abs(localPos.Z) <= size.Z * 0.55
+				then
+					return key
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function setCheckpoint(player, roomKey, force)
+	local key = normalizeRoomKey(roomKey)
+	if not key or not player then
+		return false
+	end
+
+	local current = player:GetAttribute(ATTR_CHECKPOINT)
+	local currentRank = ROOM_ORDER[current] or 0
+	local nextRank = ROOM_ORDER[key] or 0
+
+	if not force and nextRank < currentRank then
+		return false
+	end
+
+	if current ~= key then
+		player:SetAttribute(ATTR_CHECKPOINT, key)
+		print("[TRIAL RESPAWN] " .. player.Name .. " checkpoint set to Room " .. key)
+	else
+		player:SetAttribute(ATTR_CHECKPOINT, key)
+	end
+
+	applyPlayerRespawnLocation(player, key)
+	return true
+end
+
+local function getCheckpoint(player)
+	local key = player and player:GetAttribute(ATTR_CHECKPOINT)
+	return normalizeRoomKey(key) or "A"
+end
+
+local function placeCharacterAtCheckpoint(player, character)
+	local roomKey = getCheckpoint(player)
+	local checkpoint = findCheckpointPart(roomKey)
+	if not checkpoint then
+		warn("[TRIAL RESPAWN] No checkpoint part for Room " .. roomKey .. " — falling back to SpawnLocation only")
+		applyPlayerRespawnLocation(player, roomKey)
+		return false
+	end
+
+	applyPlayerRespawnLocation(player, roomKey)
+
+	local hrp = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 5)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not hrp then
+		warn("[TRIAL RESPAWN] No HumanoidRootPart for " .. player.Name)
+		return false
+	end
+
+	local look = checkpoint.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude < 0.05 then
+		flatLook = Vector3.new(0, 0, 1)
+	else
+		flatLook = flatLook.Unit
+	end
+	local spawnPos = checkpoint.Position + Vector3.new(0, 4, 0)
+	local targetCF = CFrame.lookAt(spawnPos, spawnPos + flatLook)
+
+	-- Fight default SpawnLocation / other scripts: re-apply several times.
+	local placed = false
+	for i = 1, 12 do
+		if not character.Parent or not hrp.Parent then
+			return false
+		end
+		hrp.CFrame = targetCF
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
+		placed = true
+		task.wait(0.1)
+	end
+
+	if humanoid and humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth then
+		humanoid.Health = humanoid.MaxHealth
+	end
+
+	if placed then
+		print("[TRIAL RESPAWN] " .. player.Name .. " respawned at Room " .. roomKey .. " checkpoint")
+	end
+	return placed
+end
+
+local function onPlayerDied(player, character)
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	local deathPos = hrp and hrp.Position or nil
+
+	-- Prefer existing checkpoint; if missing/stale, infer from death position.
+	local roomKey = getCheckpoint(player)
+	local inferred = deathPos and inferRoomFromPosition(deathPos) or nil
+	if inferred then
+		local curRank = ROOM_ORDER[roomKey] or 0
+		local infRank = ROOM_ORDER[inferred] or 0
+		if infRank >= curRank then
+			setCheckpoint(player, inferred, true)
+			roomKey = inferred
+		end
+	elseif not player:GetAttribute(ATTR_CHECKPOINT) then
+		setCheckpoint(player, "A", true)
+		roomKey = "A"
+	end
+
+	print("[TRIAL RESPAWN] " .. player.Name .. " died in Room " .. roomKey)
+	player:SetAttribute(ATTR_RESPAWNING, true)
+	applyPlayerRespawnLocation(player, roomKey)
+end
+
+local function hookCharacter(player, character)
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	if not humanoid then
+		return
+	end
+
+	local shouldPlace = player:GetAttribute(ATTR_RESPAWNING) == true
+		or player:GetAttribute(ATTR_CHECKPOINT) ~= nil
+
+	if player:GetAttribute(ATTR_RESPAWNING) == true then
+		player:SetAttribute(ATTR_RESPAWNING, false)
+	end
+
+	if shouldPlace then
+		task.defer(function()
+			-- Let Roblox finish default spawn, then override.
+			task.wait(0.05)
+			if character.Parent then
+				placeCharacterAtCheckpoint(player, character)
+			end
+			task.wait(0.2)
+			if _G.TrialSpell and type(_G.TrialSpell.restoreSpellAfterRespawn) == "function" then
+				_G.TrialSpell.restoreSpellAfterRespawn(player)
+			end
+		end)
+	elseif not player:GetAttribute(ATTR_CHECKPOINT) then
+		-- First character: default Room A when they enter the trial markers later.
+		applyPlayerRespawnLocation(player, "A")
+	end
+
+	humanoid.Died:Connect(function()
+		onPlayerDied(player, character)
+	end)
+end
+
+local function bindPlayer(player)
+	if playerConnections[player] then
+		return
+	end
+
+	local conns = {}
+	table.insert(conns, player.CharacterAdded:Connect(function(character)
+		hookCharacter(player, character)
+	end))
+
+	if player.Character then
+		hookCharacter(player, player.Character)
+	end
+
+	playerConnections[player] = conns
+
+	-- Always bind a safe default RespawnLocation so Roblox does not pick a random room spawn.
+	if player:GetAttribute(ATTR_CHECKPOINT) then
+		applyPlayerRespawnLocation(player, getCheckpoint(player))
+	else
+		applyPlayerRespawnLocation(player, "A")
+	end
+end
+
+local function unbindPlayer(player)
+	local conns = playerConnections[player]
+	if conns then
+		for _, c in ipairs(conns) do
+			c:Disconnect()
+		end
+		playerConnections[player] = nil
+	end
+end
+
+local API = {}
+
+function API.bindChamber(rootModel)
+	chamberRoot = rootModel
+	rebuildSpawnLocations()
+	print("[TRIAL RESPAWN] Chamber bound: " .. (rootModel and rootModel:GetFullName() or "nil"))
+
+	-- Refresh RespawnLocation for everyone already in the trial.
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player:GetAttribute(ATTR_CHECKPOINT) then
+			applyPlayerRespawnLocation(player, getCheckpoint(player))
+		end
+	end
+end
+
+function API.setCheckpoint(player, roomKey, force)
+	return setCheckpoint(player, roomKey, force)
+end
+
+function API.getCheckpoint(player)
+	return getCheckpoint(player)
+end
+
+function API.findCheckpointPart(roomKey)
+	return findCheckpointPart(roomKey)
+end
+
+function API.inferRoomFromPosition(worldPos)
+	return inferRoomFromPosition(worldPos)
+end
+
+_G.TrialChamberRespawn = API
+
+Players.PlayerAdded:Connect(bindPlayer)
+Players.PlayerRemoving:Connect(unbindPlayer)
+for _, player in ipairs(Players:GetPlayers()) do
+	bindPlayer(player)
+end
+
+task.defer(function()
+	local root = findChamberRoot()
+	if root then
+		API.bindChamber(root)
+	end
+end)
+
+print("[TRIAL RESPAWN] TrialChamberRespawn ready")
+
+return API
