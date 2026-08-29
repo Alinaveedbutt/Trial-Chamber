@@ -241,34 +241,39 @@ local function placeCharacterAtCheckpoint(player, character)
 	local spawnPos = checkpoint.Position + Vector3.new(0, 4, 0)
 	local targetCF = CFrame.lookAt(spawnPos, spawnPos + flatLook)
 
-	-- Fight default SpawnLocation / other scripts: re-apply several times.
-	local placed = false
-	for i = 1, 12 do
-		if not character.Parent or not hrp.Parent then
-			return false
+	-- One primary seat + one short correction. Do NOT spam CFrame (looks like multi-respawn).
+	if not character.Parent or not hrp.Parent then
+		return false
+	end
+	hrp.CFrame = targetCF
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+	task.wait(0.15)
+	if character.Parent and hrp.Parent then
+		-- Only correct if something else moved the character away from the checkpoint.
+		if (hrp.Position - spawnPos).Magnitude > 6 then
+			hrp.CFrame = targetCF
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			hrp.AssemblyAngularVelocity = Vector3.zero
 		end
-		hrp.CFrame = targetCF
-		hrp.AssemblyLinearVelocity = Vector3.zero
-		hrp.AssemblyAngularVelocity = Vector3.zero
-		placed = true
-		task.wait(0.1)
 	end
 
-	if humanoid and humanoid.Health > 0 and humanoid.Health < humanoid.MaxHealth then
-		humanoid.Health = humanoid.MaxHealth
-	end
-
-	if placed then
-		print("[TRIAL RESPAWN] " .. player.Name .. " respawned at Room " .. roomKey .. " checkpoint")
-	end
-	return placed
+	print("[TRIAL RESPAWN] " .. player.Name .. " respawned at Room " .. roomKey .. " checkpoint")
+	return true
 end
 
 local function onPlayerDied(player, character)
+	-- Guard: one death event per character instance.
+	if character and character:GetAttribute("TrialDeathHandled") == true then
+		return
+	end
+	if character then
+		character:SetAttribute("TrialDeathHandled", true)
+	end
+
 	local hrp = character and character:FindFirstChild("HumanoidRootPart")
 	local deathPos = hrp and hrp.Position or nil
 
-	-- Prefer existing checkpoint; if missing/stale, infer from death position.
 	local roomKey = getCheckpoint(player)
 	local inferred = deathPos and inferRoomFromPosition(deathPos) or nil
 	if inferred then
@@ -286,6 +291,21 @@ local function onPlayerDied(player, character)
 	print("[TRIAL RESPAWN] " .. player.Name .. " died in Room " .. roomKey)
 	player:SetAttribute(ATTR_RESPAWNING, true)
 	applyPlayerRespawnLocation(player, roomKey)
+
+	-- Room A death: restart portcullis + restore pre-Room-B Gate_AB/passage state.
+	if roomKey == "A" then
+		player:SetAttribute("PendingRoomABarRestart", true)
+		if _G.RoomAExitGateController and type(_G.RoomAExitGateController.reset) == "function" then
+			_G.RoomAExitGateController.reset("trial_respawn_death")
+		elseif type(_G.RoomAPortcullisReset) == "function" then
+			_G.RoomAPortcullisReset("trial_respawn_death")
+		end
+		if _G.RoomABTransitionController and type(_G.RoomABTransitionController.resetForRoomA) == "function" then
+			_G.RoomABTransitionController.resetForRoomA("room_a_death")
+		elseif _G.PassageSecurityGateController and type(_G.PassageSecurityGateController.reset) == "function" then
+			_G.PassageSecurityGateController.reset("room_a_death")
+		end
+	end
 end
 
 local function hookCharacter(player, character)
@@ -294,8 +314,10 @@ local function hookCharacter(player, character)
 		return
 	end
 
+	-- ONLY relocate after a death-driven respawn.
+	-- Do not teleport on every CharacterAdded just because a checkpoint exists —
+	-- that fights Roblox's single respawn and looks like multiple respawns.
 	local shouldPlace = player:GetAttribute(ATTR_RESPAWNING) == true
-		or player:GetAttribute(ATTR_CHECKPOINT) ~= nil
 
 	if player:GetAttribute(ATTR_RESPAWNING) == true then
 		player:SetAttribute(ATTR_RESPAWNING, false)
@@ -303,26 +325,44 @@ local function hookCharacter(player, character)
 
 	if shouldPlace then
 		task.defer(function()
-			-- Let Roblox finish default spawn, then override.
 			task.wait(0.05)
 			if character.Parent then
 				placeCharacterAtCheckpoint(player, character)
 			end
-			task.wait(0.2)
+			task.wait(0.15)
+			-- Restore persistent unlocks after respawn (not room-gated).
+			if _G.Progression and type(_G.Progression.ensureSwordAfterRespawn) == "function" then
+				_G.Progression.ensureSwordAfterRespawn(player)
+			end
 			if _G.TrialSpell and type(_G.TrialSpell.restoreSpellAfterRespawn) == "function" then
 				_G.TrialSpell.restoreSpellAfterRespawn(player)
 			end
+			-- Room A bars + A/B gates: one activate + one transition reset (no duplicate controllers).
+			local roomKey = getCheckpoint(player)
+			if roomKey == "A" and character.Parent then
+				print("[ROOM RESET] Player respawned in Room A")
+				if _G.RoomABTransitionController and type(_G.RoomABTransitionController.resetForRoomA) == "function" then
+					_G.RoomABTransitionController.resetForRoomA("room_a_respawn")
+				elseif _G.PassageSecurityGateController and type(_G.PassageSecurityGateController.reset) == "function" then
+					_G.PassageSecurityGateController.reset("room_a_respawn")
+				end
+				if _G.RoomAExitGateController and type(_G.RoomAExitGateController.activate) == "function" then
+					_G.RoomAExitGateController.activate(character)
+				end
+			end
 		end)
 	elseif not player:GetAttribute(ATTR_CHECKPOINT) then
-		-- First character: default Room A when they enter the trial markers later.
 		applyPlayerRespawnLocation(player, "A")
+	else
+		-- Keep RespawnLocation aligned with checkpoint; do not force-move living joins.
+		applyPlayerRespawnLocation(player, getCheckpoint(player))
 	end
 
+	-- One Died connection for this character only (new CharacterAdded => new character).
 	humanoid.Died:Connect(function()
 		onPlayerDied(player, character)
 	end)
 end
-
 local function bindPlayer(player)
 	if playerConnections[player] then
 		return
