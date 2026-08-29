@@ -50,7 +50,7 @@ local function findCheckpointPart(roomKey)
 	end
 
 	local preferredNames = {
-		A = { "RoomACheckpoint", "Checkpoint_RoomA", "TrialStartMarker" },
+		A = { "RoomACheckpoint", "TrialStartMarker", "Checkpoint_RoomA" },
 		B = { "RoomBCheckpoint", "Checkpoint_RoomB" },
 		C = { "RoomCCheckpoint", "Checkpoint_RoomC" },
 		D = { "RoomDCheckpoint", "Checkpoint_RoomD" },
@@ -340,7 +340,7 @@ local function hookCharacter(player, character)
 			-- Room A bars + A/B gates: one activate + one transition reset (no duplicate controllers).
 			local roomKey = getCheckpoint(player)
 			if roomKey == "A" and character.Parent then
-				print("[ROOM RESET] Player respawned in Room A")
+				print("[ROOM RESET] Player respawned in Room A — restarting ExitPortcullis timer")
 				if _G.RoomABTransitionController and type(_G.RoomABTransitionController.resetForRoomA) == "function" then
 					_G.RoomABTransitionController.resetForRoomA("room_a_respawn")
 				elseif _G.PassageSecurityGateController and type(_G.PassageSecurityGateController.reset) == "function" then
@@ -348,6 +348,7 @@ local function hookCharacter(player, character)
 				end
 				if _G.RoomAExitGateController and type(_G.RoomAExitGateController.activate) == "function" then
 					_G.RoomAExitGateController.activate(character)
+					player:SetAttribute("PendingRoomABarRestart", nil)
 				end
 			end
 		end)
