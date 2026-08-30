@@ -6,12 +6,13 @@
 --   B) ModuleScript under ServerScriptService — RevampV10 will require() it
 --
 -- API:
---   _G.TrialChamberRespawn.setCheckpoint(player, "A"|"B"|"C")
+--   _G.TrialChamberRespawn.setCheckpoint(player, "A"|"B"|"C"|"D")
 --   _G.TrialChamberRespawn.getCheckpoint(player)
 --   _G.TrialChamberRespawn.bindChamber(rootModel)
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 
 local ROOM_ORDER = { A = 1, B = 2, C = 3, D = 4 }
 
@@ -21,6 +22,8 @@ local ATTR_RESPAWNING = "TrialRespawnPending"
 local chamberRoot = nil
 local playerConnections = {}
 local spawnByRoom = {} -- [ "A"|"B"|"C"|"D" ] = SpawnLocation
+local lastPosByUser = {} -- [userId] = Vector3 (HRP may be gone by Died)
+local cachedRoomDKillVolume = nil -- avoid a recursive FindFirstChild every poll
 
 local function findChamberRoot()
 	if chamberRoot and chamberRoot.Parent then
@@ -76,6 +79,173 @@ local function findCheckpointPart(roomKey)
 	end
 
 	return nil
+end
+
+local function topOfPart(part)
+	return part.Position.Y + part.Size.Y * 0.5
+end
+
+-- Solid pad at the Ancient Gate (Room D entrance), NOT the chasm pit at y=-50.
+local function findRoomDStandPart()
+	local root = findChamberRoot()
+	if not root then
+		return nil
+	end
+	local trans = root:FindFirstChild("TransitionCD")
+	if trans then
+		local gate = trans:FindFirstChild("AncientGate", true)
+		if gate then
+			local threshold = gate:FindFirstChild("Threshold", true)
+			if threshold and threshold:IsA("BasePart") then
+				return threshold
+			end
+		end
+		local floor = trans:FindFirstChild("ClearingFloor")
+		if floor and floor:IsA("BasePart") then
+			return floor
+		end
+	end
+	return nil
+end
+
+local function roomDWorldCFrame()
+	local root = findChamberRoot()
+	if not root then
+		return nil
+	end
+
+	local stand = findRoomDStandPart()
+	local chasm = root:FindFirstChild("RoomD_Chasm") or root:FindFirstChild("RoomD")
+
+	local pos
+	if stand then
+		pos = Vector3.new(stand.Position.X, topOfPart(stand) + 1, stand.Position.Z)
+		if chasm then
+			local toward = Vector3.new(chasm:GetPivot().Position.X - stand.Position.X, 0, chasm:GetPivot().Position.Z - stand.Position.Z)
+			if toward.Magnitude > 1 then
+				-- Stand just through the gate on the Room D side, still on the solid floor.
+				pos = pos + toward.Unit * 8
+			end
+		end
+	elseif chasm then
+		-- Last resort: highest floor-like part near the south of the chasm (entrance).
+		local best, bestY = nil, -math.huge
+		for _, inst in ipairs(chasm:GetDescendants()) do
+			if inst:IsA("BasePart") and inst.CanCollide and inst.Size.Y < 8 and inst.Size.X >= 8 and inst.Size.Z >= 8 then
+				if inst.Position.Y > bestY then
+					bestY = inst.Position.Y
+					best = inst
+				end
+			end
+		end
+		if best then
+			pos = Vector3.new(best.Position.X, topOfPart(best) + 1, best.Position.Z)
+		end
+	end
+
+	if not pos then
+		return nil
+	end
+
+	local lookTarget = pos
+	if chasm then
+		local pivot = chasm:GetPivot().Position
+		local flat = Vector3.new(pivot.X - pos.X, 0, pivot.Z - pos.Z)
+		if flat.Magnitude > 1 then
+			lookTarget = pos + flat.Unit
+		end
+	end
+	if lookTarget == pos then
+		lookTarget = pos + Vector3.new(0, 0, 1)
+	end
+	return CFrame.lookAt(pos, lookTarget)
+end
+
+-- Checkpoint on the gate pad (the circled floor in front of the Room D door).
+local function ensureRoomDCheckpointPart()
+	local root = findChamberRoot()
+	if not root then
+		return nil
+	end
+	local cf = roomDWorldCFrame()
+	if not cf then
+		return nil
+	end
+
+	local folder = root:FindFirstChild("TransitionCD")
+		or root:FindFirstChild("RoomD_Chasm")
+		or root:FindFirstChild("RoomD")
+		or root
+
+	local existing = findCheckpointPart("D")
+	if existing then
+		existing.CFrame = cf
+		existing.Parent = folder
+		return existing
+	end
+
+	local part = Instance.new("Part")
+	part.Name = "RoomDCheckpoint"
+	part.Size = Vector3.new(6, 1, 6)
+	part.CFrame = cf
+	part.Transparency = 1
+	part.CanCollide = false
+	part.CanQuery = false
+	part.Anchored = true
+	part.Parent = folder
+	print("[TRIAL RESPAWN] RoomDCheckpoint placed on Ancient Gate pad")
+	return part
+end
+
+local function isInsidePart(part, worldPos)
+	if not (part and part:IsA("BasePart") and worldPos) then
+		return false
+	end
+	local lp = part.CFrame:PointToObjectSpace(worldPos)
+	local h = part.Size * 0.5
+	return math.abs(lp.X) <= h.X + 4
+		and math.abs(lp.Y) <= h.Y + 20
+		and math.abs(lp.Z) <= h.Z + 4
+end
+
+local function isInRoomD(worldPos)
+	if not worldPos then
+		return false
+	end
+	local root = findChamberRoot()
+	if root then
+		local lp = root:GetPivot():PointToObjectSpace(worldPos)
+		if lp.Z >= 555 then
+			return true
+		end
+		-- Falling in the chasm / TransCD descent
+		if lp.Z >= 530 and lp.Y < -15 then
+			return true
+		end
+		if not (cachedRoomDKillVolume and cachedRoomDKillVolume.Parent) then
+			cachedRoomDKillVolume = root:FindFirstChild("RoomD_InstantDeath", true)
+				or Workspace:FindFirstChild("RoomD_InstantDeath", true)
+		end
+		if cachedRoomDKillVolume and isInsidePart(cachedRoomDKillVolume, worldPos) then
+			return true
+		end
+		local folder = root:FindFirstChild("RoomD_Chasm") or root:FindFirstChild("RoomD")
+		if folder then
+			local ok, cf, size = pcall(function()
+				return folder:GetBoundingBox()
+			end)
+			if ok and cf and size then
+				local folderLocal = cf:PointToObjectSpace(worldPos)
+				if math.abs(folderLocal.X) <= size.X * 0.55
+					and math.abs(folderLocal.Y) <= size.Y * 0.7
+					and math.abs(folderLocal.Z) <= size.Z * 0.55
+				then
+					return true
+				end
+			end
+		end
+	end
+	return false
 end
 
 -- Roblox-native spawn points so default respawn lands in the right room.
@@ -138,41 +308,38 @@ local function inferRoomFromPosition(worldPos)
 		return nil
 	end
 
-	-- Prefer closest checkpoint among those the player has "reached" by Z
-	-- (trial advances roughly +Z after PivotTo).
-	local bestKey, bestDist = nil, math.huge
-	for _, key in ipairs({ "A", "B", "C", "D" }) do
-		local cp = findCheckpointPart(key)
-		if cp then
-			-- Only consider rooms whose checkpoint is at or behind the player along Z
-			if worldPos.Z >= (cp.Position.Z - 8) then
-				local d = (Vector3.new(cp.Position.X, 0, cp.Position.Z) - Vector3.new(worldPos.X, 0, worldPos.Z)).Magnitude
-				-- Prefer higher rooms when distances are similar
-				local score = d - (ROOM_ORDER[key] or 0) * 5
-				if score < bestDist then
-					bestDist = score
-					bestKey = key
-				end
-			end
-		end
+	if isInRoomD(worldPos) then
+		return "D"
 	end
 
-	if bestKey then
-		return bestKey
+	local localPos = root:GetPivot():PointToObjectSpace(worldPos)
+	local z = localPos.Z
+	if z >= 555 then
+		return "D"
+	end
+	if z >= 425 then
+		return "C"
+	end
+	if z >= 270 then
+		return "B"
+	end
+	if z >= -12 then
+		return "A"
 	end
 
-	-- Fallback: which room folder contains the player (AABB-ish via descendants)
-	for _, key in ipairs({ "C", "B", "A" }) do
+	-- Fallback: which room folder contains the player (D first so C cannot steal a chasm death)
+	for _, key in ipairs({ "D", "C", "B", "A" }) do
 		local folder = root:FindFirstChild("Room" .. key)
+			or (key == "D" and root:FindFirstChild("RoomD_Chasm"))
 		if folder then
 			local ok, cf, size = pcall(function()
 				return folder:GetBoundingBox()
 			end)
 			if ok and cf and size then
-				local localPos = cf:PointToObjectSpace(worldPos)
-				if math.abs(localPos.X) <= size.X * 0.55
-					and math.abs(localPos.Y) <= size.Y * 0.7
-					and math.abs(localPos.Z) <= size.Z * 0.55
+				local folderLocal = cf:PointToObjectSpace(worldPos)
+				if math.abs(folderLocal.X) <= size.X * 0.55
+					and math.abs(folderLocal.Y) <= size.Y * 0.7
+					and math.abs(folderLocal.Z) <= size.Z * 0.55
 				then
 					return key
 				end
@@ -215,30 +382,51 @@ end
 
 local function placeCharacterAtCheckpoint(player, character)
 	local roomKey = getCheckpoint(player)
+	if roomKey == "D" then
+		ensureRoomDCheckpointPart()
+		rebuildSpawnLocations()
+		applyPlayerRespawnLocation(player, "D")
+	end
 	local checkpoint = findCheckpointPart(roomKey)
-	if not checkpoint then
+	local spawnPos
+	local flatLook = Vector3.new(0, 0, 1)
+
+	if checkpoint then
+		applyPlayerRespawnLocation(player, roomKey)
+		local look = checkpoint.CFrame.LookVector
+		flatLook = Vector3.new(look.X, 0, look.Z)
+		if flatLook.Magnitude < 0.05 then
+			flatLook = Vector3.new(0, 0, 1)
+		else
+			flatLook = flatLook.Unit
+		end
+		spawnPos = checkpoint.Position + Vector3.new(0, 4, 0)
+	elseif roomKey == "D" then
+		local cf = roomDWorldCFrame()
+		if cf then
+			spawnPos = cf.Position + Vector3.new(0, 4, 0)
+			local look = cf.LookVector
+			local flat = Vector3.new(look.X, 0, look.Z)
+			if flat.Magnitude < 0.05 then
+				flatLook = Vector3.new(0, 0, 1)
+			else
+				flatLook = flat.Unit
+			end
+			print("[TRIAL RESPAWN] Room D checkpoint missing — using chasm entrance fallback")
+		end
+	end
+
+	if not spawnPos then
 		warn("[TRIAL RESPAWN] No checkpoint part for Room " .. roomKey .. " — falling back to SpawnLocation only")
 		applyPlayerRespawnLocation(player, roomKey)
 		return false
 	end
 
-	applyPlayerRespawnLocation(player, roomKey)
-
 	local hrp = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 5)
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not hrp then
 		warn("[TRIAL RESPAWN] No HumanoidRootPart for " .. player.Name)
 		return false
 	end
-
-	local look = checkpoint.CFrame.LookVector
-	local flatLook = Vector3.new(look.X, 0, look.Z)
-	if flatLook.Magnitude < 0.05 then
-		flatLook = Vector3.new(0, 0, 1)
-	else
-		flatLook = flatLook.Unit
-	end
-	local spawnPos = checkpoint.Position + Vector3.new(0, 4, 0)
 	local targetCF = CFrame.lookAt(spawnPos, spawnPos + flatLook)
 
 	-- One primary seat + one short correction. Do NOT spam CFrame (looks like multi-respawn).
@@ -271,21 +459,39 @@ local function onPlayerDied(player, character)
 		character:SetAttribute("TrialDeathHandled", true)
 	end
 
-	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	local deathPos = hrp and hrp.Position or nil
-
-	local roomKey = getCheckpoint(player)
-	local inferred = deathPos and inferRoomFromPosition(deathPos) or nil
-	if inferred then
-		local curRank = ROOM_ORDER[roomKey] or 0
-		local infRank = ROOM_ORDER[inferred] or 0
-		if infRank >= curRank then
-			setCheckpoint(player, inferred, true)
-			roomKey = inferred
-		end
-	elseif not player:GetAttribute(ATTR_CHECKPOINT) then
+	-- getCheckpoint() reflects the room the player was continuously tracked in
+	-- while alive (see the Heartbeat tracker near the bottom of this file), so
+	-- it's reliable even if HumanoidRootPart is already gone or mid-ragdoll by
+	-- the time Died fires. This used to be the ONLY place A/B/C checkpoints got
+	-- set, computed from a single position sample (live HRP, or a fallback that
+	-- could be up to ~200ms stale) — if that sample landed just barely on the
+	-- wrong side of a room boundary, the death got attributed to the PREVIOUS
+	-- room instead of the one the player actually died in.
+	if not player:GetAttribute(ATTR_CHECKPOINT) then
 		setCheckpoint(player, "A", true)
-		roomKey = "A"
+	end
+	local roomKey = getCheckpoint(player)
+
+	-- Still take a fresh position sample when one is available, but only to
+	-- ADVANCE the checkpoint (e.g. the player died the instant they crossed
+	-- into a new room, before the tracker's next tick could run). setCheckpoint
+	-- without `force` is rank-guarded, so this can never move it backwards.
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	local deathPos = (hrp and hrp.Position) or lastPosByUser[player.UserId]
+	if deathPos then
+		if isInRoomD(deathPos) then
+			ensureRoomDCheckpointPart()
+			setCheckpoint(player, "D")
+		else
+			local inferred = inferRoomFromPosition(deathPos)
+			if inferred then
+				if inferred == "D" then
+					ensureRoomDCheckpointPart()
+				end
+				setCheckpoint(player, inferred)
+			end
+		end
+		roomKey = getCheckpoint(player)
 	end
 
 	print("[TRIAL RESPAWN] " .. player.Name .. " died in Room " .. roomKey)
@@ -336,6 +542,10 @@ local function hookCharacter(player, character)
 			end
 			if _G.TrialSpell and type(_G.TrialSpell.restoreSpellAfterRespawn) == "function" then
 				_G.TrialSpell.restoreSpellAfterRespawn(player)
+			end
+			if _G.TrialSpell and type(_G.TrialSpell.orderHotbar) == "function" then
+				task.wait(0.1)
+				_G.TrialSpell.orderHotbar(player)
 			end
 			-- Room A bars + A/B gates: one activate + one transition reset (no duplicate controllers).
 			local roomKey = getCheckpoint(player)
@@ -396,12 +606,16 @@ local function unbindPlayer(player)
 		end
 		playerConnections[player] = nil
 	end
+	if player then
+		lastPosByUser[player.UserId] = nil
+	end
 end
 
 local API = {}
 
 function API.bindChamber(rootModel)
 	chamberRoot = rootModel
+	ensureRoomDCheckpointPart()
 	rebuildSpawnLocations()
 	print("[TRIAL RESPAWN] Chamber bound: " .. (rootModel and rootModel:GetFullName() or "nil"))
 
@@ -430,6 +644,42 @@ function API.inferRoomFromPosition(worldPos)
 end
 
 _G.TrialChamberRespawn = API
+
+-- Continuously track which room every LIVING player is standing in, for all
+-- four rooms (previously this only ever tracked Room D). setCheckpoint() is
+-- called without force, so it's rank-guarded and can only ever advance the
+-- checkpoint (A -> B -> C -> D), never move it backwards. This is what makes
+-- onPlayerDied's getCheckpoint() reliable: the correct room gets latched in
+-- well before a death happens, instead of being guessed from a single
+-- position sample taken at (or just after) the moment of death.
+local TRACK_INTERVAL = 0.05 -- 20Hz; closes the old ~200ms staleness window
+local trackAcc = 0
+RunService.Heartbeat:Connect(function(dt)
+	trackAcc += dt
+	if trackAcc < TRACK_INTERVAL then
+		return
+	end
+	trackAcc = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		-- Skip anyone already dead/ragdolling — a corpse sliding around post-death
+		-- shouldn't feed a bogus room reading before the next respawn happens.
+		if humanoid and humanoid.Health > 0 then
+			local hrp = character:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				lastPosByUser[player.UserId] = hrp.Position
+				local room = inferRoomFromPosition(hrp.Position)
+				if room then
+					if room == "D" then
+						ensureRoomDCheckpointPart()
+					end
+					setCheckpoint(player, room)
+				end
+			end
+		end
+	end
+end)
 
 Players.PlayerAdded:Connect(bindPlayer)
 Players.PlayerRemoving:Connect(unbindPlayer)
