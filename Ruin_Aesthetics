@@ -1,0 +1,893 @@
+-- TrialChamber_RuinsAesthetic.lua
+-- Pure visual overlay for TrialChamberGeneratedV5_Sky.
+-- Adds ruins vines, weeds, rubble, rust weathering, and realistic Room B water.
+-- Does NOT move/resize/disable gameplay structure, traps, spawns, gates, or scripts.
+
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+
+local CHAMBER_NAME = "TrialChamberGeneratedV5_Sky"
+local PASS_FOLDER_NAME = "RuinsAestheticPass"
+local ATTR_APPLIED = "RuinsAestheticApplied"
+local ATTR_WATER = "RuinsWaterEnhanced"
+
+local RNG = Random.new(90503744)
+
+local COLORS = {
+	vineDeep = Color3.fromRGB(28, 62, 24),
+	vineMid = Color3.fromRGB(42, 88, 34),
+	vineDead = Color3.fromRGB(58, 72, 38),
+	weedCreepy = Color3.fromRGB(36, 52, 28),
+	weedSick = Color3.fromRGB(62, 58, 28),
+	weedDark = Color3.fromRGB(24, 38, 22),
+	moss = Color3.fromRGB(48, 78, 36),
+	mossWet = Color3.fromRGB(34, 70, 48),
+	stone = Color3.fromRGB(78, 74, 68),
+	stoneDark = Color3.fromRGB(52, 50, 48),
+	stonePale = Color3.fromRGB(110, 104, 96),
+	rust = Color3.fromRGB(120, 62, 28),
+	rustDark = Color3.fromRGB(78, 42, 22),
+	rustStreak = Color3.fromRGB(96, 54, 30),
+	waterDeep = Color3.fromRGB(8, 38, 48),
+	waterMid = Color3.fromRGB(12, 72, 82),
+	waterSurface = Color3.fromRGB(48, 120, 128),
+	waterFoam = Color3.fromRGB(190, 220, 220),
+	algae = Color3.fromRGB(40, 78, 42),
+}
+
+local PROTECTED_NAME_FRAGMENTS = {
+	"SpikeTrap", "SwingingBlade", "CeilingSpike", "WallSpike", "FinalSpike",
+	"Checkpoint", "Spawn", "Golem", "Heart", "Portcullis", "Sealing",
+	"Trap", "Controller", "Prompt", "Humanoid", "Hitbox", "Kill",
+	"TrialStart", "GateLeaf", "DoorLeaf", "Magic", "Sword",
+	"Chain", "KillVolume", "RoomACheckpoint", "RoomBCheckpoint",
+	"RoomCCheckpoint", "RoomDCheckpoint",
+}
+
+local function isProtected(inst)
+	local name = inst.Name
+	for _, frag in ipairs(PROTECTED_NAME_FRAGMENTS) do
+		if string.find(name, frag, 1, true) then
+			return true
+		end
+	end
+	local cur = inst
+	while cur and cur ~= Workspace do
+		for _, frag in ipairs(PROTECTED_NAME_FRAGMENTS) do
+			if string.find(cur.Name, frag, 1, true) then
+				return true
+			end
+		end
+		if cur.Name == "Traps" or cur.Name == "GolemSpawnPoints" then
+			return true
+		end
+		cur = cur.Parent
+	end
+	for _, tag in ipairs(CollectionService:GetTags(inst)) do
+		if tag == "SpikeTrap" or tag == "SwingingBlade" or tag == "SealingDoor" then
+			return true
+		end
+	end
+	return false
+end
+
+local function makePart(props)
+	local part = Instance.new(props.ClassName or "Part")
+	part.Name = props.Name or "Decor"
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.CastShadow = props.CastShadow ~= false
+	part.Material = props.Material or Enum.Material.LeafyGrass
+	part.Color = props.Color or COLORS.vineMid
+	part.Size = props.Size or Vector3.new(1, 1, 1)
+	part.CFrame = props.CFrame or CFrame.new()
+	part.Transparency = props.Transparency or 0
+	part.Reflectance = props.Reflectance or 0
+	if props.Shape then
+		part.Shape = props.Shape
+	end
+	if props.TopSurface then
+		part.TopSurface = props.TopSurface
+	end
+	part.Parent = props.Parent
+	return part
+end
+
+local function ensurePassFolder(chamber)
+	local existing = chamber:FindFirstChild(PASS_FOLDER_NAME)
+	if existing then
+		existing:Destroy()
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = PASS_FOLDER_NAME
+	folder.Parent = chamber
+	return folder
+end
+
+local function subfolder(parent, name)
+	local f = Instance.new("Folder")
+	f.Name = name
+	f.Parent = parent
+	return f
+end
+
+local function gatherCandidates(root, predicate, limit)
+	local list = {}
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("BasePart") and not isProtected(d) and predicate(d) then
+			table.insert(list, d)
+			if limit and #list >= limit then
+				break
+			end
+		end
+	end
+	return list
+end
+
+------------------------------------------------------------------------
+-- Room B water: layered depth + surface glass + foam + mist
+------------------------------------------------------------------------
+local function enhanceRoomBWater_legacy(chamber, passRoot)
+	local roomB = chamber:FindFirstChild("RoomB")
+	if not roomB then
+		return 0
+	end
+	local floor = roomB:FindFirstChild("StructuralFloor")
+	if not floor then
+		return 0
+	end
+
+	local waterFolder = subfolder(passRoot, "RoomB_Water")
+	local count = 0
+
+	for _, edge in ipairs(floor:GetChildren()) do
+		if edge:IsA("BasePart") and string.sub(edge.Name, 1, 9) == "WaterEdge" then
+			edge.Material = Enum.Material.Glass
+			edge.Color = COLORS.waterDeep
+			edge.Transparency = 0.28
+			edge.Reflectance = 0.08
+			edge.CastShadow = false
+			edge:SetAttribute(ATTR_WATER, true)
+
+			local cf = edge.CFrame
+			local size = edge.Size
+
+			makePart({
+				Name = "WaterDeepTint",
+				Size = Vector3.new(size.X * 0.98, 0.85, size.Z * 0.92),
+				CFrame = cf * CFrame.new(0, -0.55, 0),
+				Material = Enum.Material.SmoothPlastic,
+				Color = Color3.fromRGB(4, 28, 36),
+				Transparency = 0.22,
+				Reflectance = 0.02,
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+
+			makePart({
+				Name = "WaterMidSheet",
+				Size = Vector3.new(size.X * 0.97, 0.18, size.Z * 0.9),
+				CFrame = cf * CFrame.new(0, 0.12, 0),
+				Material = Enum.Material.Glass,
+				Color = COLORS.waterMid,
+				Transparency = 0.42,
+				Reflectance = 0.35,
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+
+			local surface = makePart({
+				Name = "WaterSurface",
+				Size = Vector3.new(size.X * 0.96, 0.08, size.Z * 0.88),
+				CFrame = cf * CFrame.new(0, 0.28, 0),
+				Material = Enum.Material.Glass,
+				Color = COLORS.waterSurface,
+				Transparency = 0.55,
+				Reflectance = 0.55,
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+
+			makePart({
+				Name = "WaterGlow",
+				Size = Vector3.new(size.X * 0.7, 0.12, size.Z * 0.55),
+				CFrame = cf * CFrame.new(0, -0.25, 0),
+				Material = Enum.Material.Neon,
+				Color = Color3.fromRGB(18, 90, 96),
+				Transparency = 0.72,
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+
+			for a = 1, 5 do
+				local t = (a - 3) / 3
+				makePart({
+					Name = "AlgaeFringe",
+					Size = Vector3.new(size.X * (0.12 + RNG:NextNumber(0, 0.08)), 0.12, 0.7 + RNG:NextNumber(0, 0.5)),
+					CFrame = cf
+						* CFrame.new(t * size.X * 0.35, 0.2, -size.Z * 0.38)
+						* CFrame.Angles(0, RNG:NextNumber(-0.2, 0.2), RNG:NextNumber(-0.15, 0.15)),
+					Material = Enum.Material.LeafyGrass,
+					Color = COLORS.algae,
+					Transparency = 0.15,
+					Parent = waterFolder,
+				})
+			end
+
+			local foamAtt = Instance.new("Attachment")
+			foamAtt.Name = "FoamAtt"
+			foamAtt.Position = Vector3.new(0, 0.35, -size.Z * 0.42)
+			foamAtt.Parent = surface
+
+			local foam = Instance.new("ParticleEmitter")
+			foam.Name = "ShoreFoam"
+			foam.Texture = "rbxasset://textures/particles/smoke_main.dds"
+			foam.Color = ColorSequence.new(COLORS.waterFoam)
+			foam.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.35),
+				NumberSequenceKeypoint.new(1, 0.05),
+			})
+			foam.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.35),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			foam.Lifetime = NumberRange.new(0.6, 1.3)
+			foam.Rate = 10
+			foam.Speed = NumberRange.new(0.15, 0.55)
+			foam.SpreadAngle = Vector2.new(18, 8)
+			foam.EmissionDirection = Enum.NormalId.Top
+			foam.RotSpeed = NumberRange.new(-20, 20)
+			foam.LightEmission = 0.15
+			foam.Parent = foamAtt
+
+			local mistAtt = Instance.new("Attachment")
+			mistAtt.Name = "MistAtt"
+			mistAtt.Position = Vector3.new(0, 0.5, 0)
+			mistAtt.Parent = surface
+
+			local mist = Instance.new("ParticleEmitter")
+			mist.Name = "WaterMist"
+			mist.Texture = "rbxasset://textures/particles/smoke_main.dds"
+			mist.Color = ColorSequence.new(Color3.fromRGB(160, 190, 195))
+			mist.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1.2),
+				NumberSequenceKeypoint.new(1, 2.4),
+			})
+			mist.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.75),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			mist.Lifetime = NumberRange.new(2.5, 4)
+			mist.Rate = 3
+			mist.Speed = NumberRange.new(0.05, 0.2)
+			mist.SpreadAngle = Vector2.new(40, 20)
+			mist.EmissionDirection = Enum.NormalId.Top
+			mist.LightEmission = 0.05
+			mist.Parent = mistAtt
+
+			local sheen = Instance.new("Texture")
+			sheen.Name = "WaterSheen"
+			sheen.Face = Enum.NormalId.Top
+			sheen.Texture = "rbxasset://textures/particles/smoke_main.dds"
+			sheen.Transparency = 0.72
+			sheen.StudsPerTileU = 8
+			sheen.StudsPerTileV = 8
+			sheen.Color3 = Color3.fromRGB(150, 200, 210)
+			sheen.Parent = surface
+
+			count += 1
+		end
+	end
+
+	local floorMain = floor:FindFirstChild("Floor_Main")
+	if floorMain then
+		for i = 1, 28 do
+			local angle = RNG:NextNumber(0, math.pi * 2)
+			local dist = RNG:NextNumber(28, 42)
+			local pos = floorMain.Position + Vector3.new(math.cos(angle) * dist, floorMain.Size.Y * 0.5 + 0.06, math.sin(angle) * dist)
+			makePart({
+				Name = "WetMoss",
+				Size = Vector3.new(RNG:NextNumber(1.2, 3.2), 0.1, RNG:NextNumber(1.0, 2.6)),
+				CFrame = CFrame.new(pos) * CFrame.Angles(0, RNG:NextNumber(0, 6.28), RNG:NextNumber(-0.08, 0.08)),
+				Material = Enum.Material.LeafyGrass,
+				Color = if RNG:NextNumber() > 0.5 then COLORS.mossWet else COLORS.moss,
+				Transparency = 0.08,
+				Parent = waterFolder,
+			})
+		end
+	end
+
+	return count
+end
+
+------------------------------------------------------------------------
+-- Organic décor builders
+------------------------------------------------------------------------
+local function addCreepingVine(_parent, wallPart, folder)
+	local faceOffset = wallPart.Size.Z * 0.5 + 0.15
+	local side = if RNG:NextNumber() > 0.5 then 1 else -1
+	local along = RNG:NextNumber(-0.42, 0.42)
+	local up = RNG:NextNumber(-0.35, 0.4)
+	local drop = RNG:NextNumber(3.5, 11)
+	local thick = RNG:NextNumber(0.28, 0.7)
+	local cf = wallPart.CFrame
+		* CFrame.new(along * wallPart.Size.X, up * wallPart.Size.Y * 0.45, side * faceOffset)
+		* CFrame.Angles(RNG:NextNumber(-0.15, 0.15), 0, RNG:NextNumber(-0.2, 0.2))
+
+	local vine = makePart({
+		Name = "RuinVine",
+		Size = Vector3.new(thick, drop, thick),
+		CFrame = cf * CFrame.new(0, -drop * 0.45, 0),
+		Material = Enum.Material.LeafyGrass,
+		Color = if RNG:NextNumber() > 0.7 then COLORS.vineDead elseif RNG:NextNumber() > 0.4 then COLORS.vineMid else COLORS.vineDeep,
+		Parent = folder,
+	})
+
+	for _ = 1, RNG:NextInteger(1, 3) do
+		local y = RNG:NextNumber(-drop * 0.35, drop * 0.25)
+		makePart({
+			Name = "VineLeaf",
+			Size = Vector3.new(RNG:NextNumber(0.8, 1.8), 0.18, RNG:NextNumber(0.5, 1.2)),
+			CFrame = vine.CFrame * CFrame.new(RNG:NextNumber(-0.4, 0.4), y, RNG:NextNumber(0.2, 0.6))
+				* CFrame.Angles(RNG:NextNumber(-0.6, 0.6), RNG:NextNumber(0, 6), RNG:NextNumber(-0.5, 0.5)),
+			Material = Enum.Material.Grass,
+			Color = COLORS.vineMid,
+			Parent = folder,
+		})
+	end
+end
+
+local function addHangingVine(parentPart, folder)
+	local drop = RNG:NextNumber(4, 14)
+	local thick = RNG:NextNumber(0.25, 0.55)
+	local cf = parentPart.CFrame
+		* CFrame.new(
+			RNG:NextNumber(-parentPart.Size.X * 0.4, parentPart.Size.X * 0.4),
+			-parentPart.Size.Y * 0.5 - drop * 0.5,
+			RNG:NextNumber(-parentPart.Size.Z * 0.4, parentPart.Size.Z * 0.4)
+		)
+	makePart({
+		Name = "HangingRuinVine",
+		Size = Vector3.new(thick, drop, thick),
+		CFrame = cf * CFrame.Angles(RNG:NextNumber(-0.1, 0.1), 0, RNG:NextNumber(-0.12, 0.12)),
+		Material = Enum.Material.LeafyGrass,
+		Color = if RNG:NextNumber() > 0.6 then COLORS.vineDead else COLORS.vineDeep,
+		Parent = folder,
+	})
+end
+
+local function addCreepyWeed(floorPart, folder, yLift)
+	local count = RNG:NextInteger(2, 5)
+	local base = floorPart.Position
+		+ Vector3.new(
+			RNG:NextNumber(-floorPart.Size.X * 0.35, floorPart.Size.X * 0.35),
+			(floorPart.Size.Y * 0.5) + (yLift or 0.05),
+			RNG:NextNumber(-floorPart.Size.Z * 0.35, floorPart.Size.Z * 0.35)
+		)
+	for _ = 1, count do
+		local h = RNG:NextNumber(0.7, 2.4)
+		local lean = CFrame.Angles(RNG:NextNumber(-0.35, 0.35), RNG:NextNumber(0, 6.28), RNG:NextNumber(-0.25, 0.25))
+		makePart({
+			Name = "CreepyWeed",
+			Size = Vector3.new(RNG:NextNumber(0.08, 0.22), h, RNG:NextNumber(0.08, 0.22)),
+			CFrame = CFrame.new(base + Vector3.new(RNG:NextNumber(-0.5, 0.5), h * 0.5, RNG:NextNumber(-0.5, 0.5))) * lean,
+			Material = Enum.Material.Grass,
+			Color = if RNG:NextNumber() > 0.55 then COLORS.weedCreepy elseif RNG:NextNumber() > 0.5 then COLORS.weedSick else COLORS.weedDark,
+			Parent = folder,
+		})
+	end
+	makePart({
+		Name = "WeedFringe",
+		Size = Vector3.new(RNG:NextNumber(0.8, 1.6), 0.12, RNG:NextNumber(0.6, 1.3)),
+		CFrame = CFrame.new(base + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, RNG:NextNumber(0, 6), 0.05),
+		Material = Enum.Material.LeafyGrass,
+		Color = COLORS.weedSick,
+		Transparency = 0.1,
+		Parent = folder,
+	})
+end
+
+local function addRubble(nearPart, folder)
+	local pile = RNG:NextInteger(2, 4)
+	local base = nearPart.Position
+		+ Vector3.new(
+			RNG:NextNumber(-2.5, 2.5),
+			nearPart.Size.Y * 0.5 + 0.1,
+			RNG:NextNumber(-2.5, 2.5)
+		)
+	for _ = 1, pile do
+		local s = Vector3.new(RNG:NextNumber(0.5, 1.8), RNG:NextNumber(0.3, 1.1), RNG:NextNumber(0.5, 1.6))
+		makePart({
+			Name = "RuinStone",
+			Size = s,
+			CFrame = CFrame.new(base + Vector3.new(RNG:NextNumber(-1.2, 1.2), s.Y * 0.45, RNG:NextNumber(-1.2, 1.2)))
+				* CFrame.Angles(RNG:NextNumber(0, 1), RNG:NextNumber(0, 6), RNG:NextNumber(0, 1)),
+			Material = Enum.Material.Rock,
+			Color = if RNG:NextNumber() > 0.6 then COLORS.stoneDark elseif RNG:NextNumber() > 0.4 then COLORS.stonePale else COLORS.stone,
+			Parent = folder,
+		})
+	end
+end
+
+local function addRustStreak(wallPart, folder)
+	local side = if RNG:NextNumber() > 0.5 then 1 else -1
+	local h = RNG:NextNumber(2.5, 8)
+	local w = RNG:NextNumber(0.18, 0.55)
+	local cf = wallPart.CFrame
+		* CFrame.new(
+			RNG:NextNumber(-wallPart.Size.X * 0.4, wallPart.Size.X * 0.4),
+			RNG:NextNumber(-wallPart.Size.Y * 0.2, wallPart.Size.Y * 0.25),
+			side * (wallPart.Size.Z * 0.5 + 0.04)
+		)
+	makePart({
+		Name = "RustStreak",
+		Size = Vector3.new(w, h, 0.08),
+		CFrame = cf * CFrame.Angles(0, 0, RNG:NextNumber(-0.15, 0.15)),
+		Material = Enum.Material.CorrodedMetal,
+		Color = if RNG:NextNumber() > 0.5 then COLORS.rust else COLORS.rustDark,
+		Transparency = 0.12,
+		Reflectance = 0.05,
+		CastShadow = false,
+		Parent = folder,
+	})
+	makePart({
+		Name = "RustBlot",
+		Size = Vector3.new(RNG:NextNumber(0.6, 1.4), 0.1, RNG:NextNumber(0.4, 0.9)),
+		CFrame = cf * CFrame.new(0, -h * 0.52, 0.1),
+		Material = Enum.Material.CorrodedMetal,
+		Color = COLORS.rustStreak,
+		Transparency = 0.2,
+		CastShadow = false,
+		Parent = folder,
+	})
+end
+
+local function weatherMetalInPlace(root, maxCount)
+	local n = 0
+	for _, d in ipairs(root:GetDescendants()) do
+		if n >= maxCount then
+			break
+		end
+		if d:IsA("BasePart") and d.Material == Enum.Material.Metal and not isProtected(d) then
+			local vol = d.Size.X * d.Size.Y * d.Size.Z
+			if vol < 40 and d.Size.Y < 12 then
+				if RNG:NextNumber() < 0.35 then
+					d.Material = Enum.Material.CorrodedMetal
+					d.Color = COLORS.rustDark:Lerp(d.Color, 0.35)
+					n += 1
+				end
+			end
+		end
+	end
+	return n
+end
+
+local function decorateRegion(region, folder, config)
+	if not region then
+		return
+	end
+
+	local walls = gatherCandidates(region, function(p)
+		local n = string.lower(p.Name)
+		return (string.find(n, "wall") or string.find(n, "bay") or string.find(n, "pillar") or string.find(n, "arch") or string.find(n, "slate") or string.find(n, "cobble"))
+			and p.Size.Y >= 4
+			and p.Size.X >= 2
+			and p.Transparency < 0.5
+	end, config.wallScanLimit or 220)
+
+	local floors = gatherCandidates(region, function(p)
+		local n = string.lower(p.Name)
+		return (string.find(n, "floor") or string.find(n, "ground") or string.find(n, "walk") or string.find(n, "plat") or string.find(n, "path") or string.find(n, "slab") or string.find(n, "rugged"))
+			and p.Size.Y <= 4
+			and p.Size.X >= 3
+			and p.Transparency < 0.4
+			and p.CanCollide
+	end, config.floorScanLimit or 180)
+
+	local roofs = gatherCandidates(region, function(p)
+		local n = string.lower(p.Name)
+		return (string.find(n, "roof") or string.find(n, "ceil") or string.find(n, "beam"))
+			and p.Size.X >= 2
+			and p.Transparency < 0.5
+	end, config.roofScanLimit or 120)
+
+	if #walls == 0 then
+		walls = gatherCandidates(region, function(p)
+			return p.Size.Y >= 6 and p.Size.X >= 3 and p.Transparency < 0.3 and p.Material ~= Enum.Material.LeafyGrass
+		end, 120)
+	end
+
+	for _ = 1, (config.vines or 0) do
+		if #walls == 0 then break end
+		addCreepingVine(region, walls[RNG:NextInteger(1, #walls)], folder)
+	end
+	for _ = 1, (config.hanging or 0) do
+		local pool = if #roofs > 0 then roofs else walls
+		if #pool == 0 then break end
+		addHangingVine(pool[RNG:NextInteger(1, #pool)], folder)
+	end
+	for _ = 1, (config.weeds or 0) do
+		if #floors == 0 then break end
+		addCreepyWeed(floors[RNG:NextInteger(1, #floors)], folder)
+	end
+	for _ = 1, (config.rubble or 0) do
+		local pool = if #walls > 0 then walls else floors
+		if #pool == 0 then break end
+		addRubble(pool[RNG:NextInteger(1, #pool)], folder)
+	end
+	for _ = 1, (config.rust or 0) do
+		if #walls == 0 then break end
+		addRustStreak(walls[RNG:NextInteger(1, #walls)], folder)
+	end
+end
+
+------------------------------------------------------------------------
+-- Main
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+-- Room B water v2: real Terrain water moat + dark riverbed + shoreline life
+-- Surface sits WATER_SURFACE_Y_OFFSET above Floor_Main top (below walkways at +0.4),
+-- so it is a shallow film: no swimming, no pathing change.
+------------------------------------------------------------------------
+local WATER_SURFACE_Y_OFFSET = 0.28
+local WATER_RING_INNER = 38.6
+local WATER_RING_OUTER = 46.2
+
+local function octApothem(dx, dz)
+	local best = 0
+	for i = 0, 7 do
+		local a = i * math.pi / 4
+		local d = dx * math.sin(a) + dz * math.cos(a)
+		if d > best then
+			best = d
+		end
+	end
+	return best
+end
+
+local function clearTerrainWaterRing()
+	local terrain = Workspace.Terrain
+	local minV = terrain:GetAttribute("RuinsWaterMin")
+	local maxV = terrain:GetAttribute("RuinsWaterMax")
+	if typeof(minV) ~= "Vector3" or typeof(maxV) ~= "Vector3" then
+		return
+	end
+	local region = Region3.new(minV, maxV):ExpandToGrid(4)
+	local mats, occ = terrain:ReadVoxels(region, 4)
+	local s = mats.Size
+	local changed = false
+	for x = 1, s.X do
+		for y = 1, s.Y do
+			for z = 1, s.Z do
+				if mats[x][y][z] == Enum.Material.Water then
+					mats[x][y][z] = Enum.Material.Air
+					occ[x][y][z] = 0
+					changed = true
+				end
+			end
+		end
+	end
+	if changed then
+		terrain:WriteVoxels(region, 4, mats, occ)
+	end
+	terrain:SetAttribute("RuinsWaterMin", nil)
+	terrain:SetAttribute("RuinsWaterMax", nil)
+end
+
+local function fillTerrainWaterRing(center, floorTopY)
+	local terrain = Workspace.Terrain
+	clearTerrainWaterRing()
+	local surfaceY = floorTopY + WATER_SURFACE_Y_OFFSET
+	local minP = Vector3.new(center.X - WATER_RING_OUTER - 4, floorTopY - 1.9, center.Z - WATER_RING_OUTER - 4)
+	local maxP = Vector3.new(center.X + WATER_RING_OUTER + 4, surfaceY + 0.01, center.Z + WATER_RING_OUTER + 4)
+	local region = Region3.new(minP, maxP):ExpandToGrid(4)
+	local mats, occ = terrain:ReadVoxels(region, 4)
+	local s = mats.Size
+	local origin = region.CFrame.Position - region.Size / 2
+	local filled = 0
+	for x = 1, s.X do
+		for z = 1, s.Z do
+			local wx = origin.X + (x - 0.5) * 4
+			local wz = origin.Z + (z - 0.5) * 4
+			local ap = octApothem(wx - center.X, wz - center.Z)
+			-- Neighbour bands sit just under the floor / inside the walls (hidden) so
+			-- terrain smoothing does not pull the visible moat surface below the grass.
+			local targetY = nil
+			if ap >= WATER_RING_INNER and ap <= WATER_RING_OUTER then
+				targetY = surfaceY
+			elseif ap >= WATER_RING_INNER - 4 and ap < WATER_RING_INNER then
+				targetY = floorTopY - 0.2
+			elseif ap > WATER_RING_OUTER and ap <= WATER_RING_OUTER + 3.8 then
+				targetY = floorTopY
+			end
+			if targetY then
+				for y = 1, s.Y do
+					local vyBottom = origin.Y + (y - 1) * 4
+					local m = mats[x][y][z]
+					if m == Enum.Material.Air or m == Enum.Material.Water then
+						local fill = math.clamp((targetY - vyBottom) / 4, 0, 1)
+						if fill > 0.02 then
+							mats[x][y][z] = Enum.Material.Water
+							occ[x][y][z] = fill
+							filled += 1
+						end
+					end
+				end
+			end
+		end
+	end
+	terrain:WriteVoxels(region, 4, mats, occ)
+	terrain:SetAttribute("RuinsWaterMin", minP)
+	terrain:SetAttribute("RuinsWaterMax", maxP)
+
+	-- Murky, calm ruins moat look (global Terrain water appearance)
+	terrain.WaterColor = Color3.fromRGB(14, 58, 56)
+	terrain.WaterTransparency = 0.38
+	terrain.WaterReflectance = 0.85
+	terrain.WaterWaveSize = 0.1
+	terrain.WaterWaveSpeed = 7
+	return filled
+end
+
+local function addEmitter(parent, name, props)
+	local e = Instance.new("ParticleEmitter")
+	e.Name = name
+	e.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	e.Color = ColorSequence.new(props.color)
+	e.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, props.size0), NumberSequenceKeypoint.new(1, props.size1) })
+	e.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, props.t0), NumberSequenceKeypoint.new(1, 1) })
+	e.Lifetime = NumberRange.new(props.life0, props.life1)
+	e.Rate = props.rate
+	e.Speed = NumberRange.new(props.speed0, props.speed1)
+	e.SpreadAngle = Vector2.new(props.spread, props.spread * 0.5)
+	e.EmissionDirection = Enum.NormalId.Top
+	e.RotSpeed = NumberRange.new(-15, 15)
+	e.LightEmission = props.light or 0
+	e.Parent = parent
+	return e
+end
+
+local function enhanceRoomBWater(chamber, passRoot)
+	local roomB = chamber:FindFirstChild("RoomB")
+	local floor = roomB and roomB:FindFirstChild("StructuralFloor")
+	local floorMain = floor and floor:FindFirstChild("Floor_Main")
+	if not floorMain then
+		return 0
+	end
+
+	local waterFolder = subfolder(passRoot, "RoomB_Water")
+	local floorTopY = floorMain.Position.Y + floorMain.Size.Y * 0.5
+	local surfaceY = floorTopY + WATER_SURFACE_Y_OFFSET
+	local center = floorMain.Position
+
+	local voxels = fillTerrainWaterRing(center, floorTopY)
+	local count = 0
+
+	for _, edge in ipairs(floor:GetChildren()) do
+		if edge:IsA("BasePart") and string.sub(edge.Name, 1, 9) == "WaterEdge" then
+			-- Hide the old flat sheet (kept in place, structure untouched).
+			edge.Transparency = 1
+			edge.CastShadow = false
+			edge:SetAttribute(ATTR_WATER, true)
+
+			local rot = edge.CFrame.Rotation
+			local function at(dx, y, dz)
+				return rot + Vector3.new(edge.Position.X, y, edge.Position.Z) + rot:VectorToWorldSpace(Vector3.new(dx, 0, dz))
+			end
+			local size = edge.Size
+
+			-- Dark silty riverbed so the shallow film reads as deep water
+			makePart({
+				Name = "Riverbed",
+				Size = Vector3.new(size.X * 0.98, 0.06, size.Z * 0.9),
+				CFrame = at(0, floorTopY + 0.03, 0.2),
+				Material = Enum.Material.Pebble,
+				Color = Color3.fromRGB(20, 26, 25),
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+			-- Pale sediment shelf along the inner shore
+			makePart({
+				Name = "SedimentShelf",
+				Size = Vector3.new(size.X * 0.96, 0.07, 1.4),
+				CFrame = at(0, floorTopY + 0.035, -size.Z * 0.5 + 0.9),
+				Material = Enum.Material.Sand,
+				Color = Color3.fromRGB(64, 66, 52),
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+
+			-- Submerged / breaking stones with moss caps
+			for _ = 1, 7 do
+				local s = Vector3.new(RNG:NextNumber(0.5, 1.4), RNG:NextNumber(0.22, 0.5), RNG:NextNumber(0.5, 1.2))
+				local dx = RNG:NextNumber(-size.X * 0.42, size.X * 0.42)
+				local dz = RNG:NextNumber(-size.Z * 0.3, size.Z * 0.3)
+				local stone = makePart({
+					Name = "MoatStone",
+					Size = s,
+					CFrame = at(dx, floorTopY + s.Y * 0.45, dz) * CFrame.Angles(RNG:NextNumber(-0.2, 0.2), RNG:NextNumber(0, 6.28), RNG:NextNumber(-0.2, 0.2)),
+					Material = Enum.Material.Slate,
+					Color = Color3.fromRGB(44, 48, 46),
+					Parent = waterFolder,
+				})
+				if s.Y > 0.3 then
+					makePart({
+						Name = "MoatStoneMoss",
+						Size = Vector3.new(s.X * 0.8, 0.08, s.Z * 0.8),
+						CFrame = stone.CFrame * CFrame.new(0, s.Y * 0.5 + 0.03, 0),
+						Material = Enum.Material.LeafyGrass,
+						Color = COLORS.mossWet,
+						Parent = waterFolder,
+					})
+				end
+			end
+
+			-- Reed clusters on the inner grass shore
+			for _ = 1, 5 do
+				local dx = RNG:NextNumber(-size.X * 0.4, size.X * 0.4)
+				local dz = -size.Z * 0.5 - RNG:NextNumber(0.2, 1.4)
+				for _ = 1, RNG:NextInteger(3, 6) do
+					local h = RNG:NextNumber(1.4, 3.2)
+					local reed = makePart({
+						Name = "Reed",
+						Size = Vector3.new(0.09, h, 0.09),
+						CFrame = at(dx + RNG:NextNumber(-0.5, 0.5), floorTopY + h * 0.5, dz + RNG:NextNumber(-0.4, 0.4))
+							* CFrame.Angles(RNG:NextNumber(-0.18, 0.18), 0, RNG:NextNumber(-0.18, 0.18)),
+						Material = Enum.Material.Grass,
+						Color = if RNG:NextNumber() > 0.5 then Color3.fromRGB(46, 78, 34) else Color3.fromRGB(70, 74, 38),
+						Parent = waterFolder,
+					})
+					if RNG:NextNumber() > 0.5 then
+						makePart({
+							Name = "Cattail",
+							Size = Vector3.new(0.16, 0.45, 0.16),
+							CFrame = reed.CFrame * CFrame.new(0, h * 0.5 + 0.2, 0),
+							Material = Enum.Material.Fabric,
+							Color = Color3.fromRGB(74, 48, 30),
+							Parent = waterFolder,
+						})
+					end
+				end
+			end
+
+			-- Lily pads floating on the surface
+			for _ = 1, 4 do
+				local d = RNG:NextNumber(0.9, 1.7)
+				makePart({
+					Name = "LilyPad",
+					Shape = Enum.PartType.Cylinder,
+					Size = Vector3.new(0.08, d, d),
+					CFrame = at(RNG:NextNumber(-size.X * 0.4, size.X * 0.4), surfaceY + 0.03, RNG:NextNumber(-size.Z * 0.28, size.Z * 0.28))
+						* CFrame.Angles(0, RNG:NextNumber(0, 6.28), math.rad(90)),
+					Material = Enum.Material.Grass,
+					Color = Color3.fromRGB(38, 88, 44),
+					Parent = waterFolder,
+				})
+			end
+
+			-- Invisible anchor for foam / mist / light
+			local anchor = makePart({
+				Name = "WaterFXAnchor",
+				Size = Vector3.new(size.X * 0.9, 0.1, 0.5),
+				CFrame = at(0, surfaceY + 0.05, -size.Z * 0.42),
+				Transparency = 1,
+				CastShadow = false,
+				Parent = waterFolder,
+			})
+			addEmitter(anchor, "ShoreFoam", { color = COLORS.waterFoam, size0 = 0.3, size1 = 0.05, t0 = 0.4, life0 = 0.6, life1 = 1.2, rate = 9, speed0 = 0.1, speed1 = 0.4, spread = 15, light = 0.1 })
+			addEmitter(anchor, "WaterMist", { color = Color3.fromRGB(150, 185, 190), size0 = 1.2, size1 = 2.6, t0 = 0.8, life0 = 2.5, life1 = 4, rate = 2, speed0 = 0.05, speed1 = 0.15, spread = 40 })
+
+			local light = Instance.new("PointLight")
+			light.Name = "WaterGlow"
+			light.Color = Color3.fromRGB(70, 150, 150)
+			light.Brightness = 0.45
+			light.Range = 14
+			light.Shadows = false
+			light.Parent = anchor
+
+			count += 1
+		end
+	end
+
+	-- Wet moss where grass meets the moat
+	for _ = 1, 30 do
+		local angle = RNG:NextNumber(0, math.pi * 2)
+		local dist = RNG:NextNumber(34, 38)
+		local pos = center + Vector3.new(math.cos(angle) * dist, floorMain.Size.Y * 0.5 + 0.05, math.sin(angle) * dist)
+		makePart({
+			Name = "WetMoss",
+			Size = Vector3.new(RNG:NextNumber(1.2, 3.2), 0.1, RNG:NextNumber(1.0, 2.6)),
+			CFrame = CFrame.new(pos) * CFrame.Angles(0, RNG:NextNumber(0, 6.28), 0),
+			Material = Enum.Material.LeafyGrass,
+			Color = if RNG:NextNumber() > 0.5 then COLORS.mossWet else COLORS.moss,
+			Transparency = 0.08,
+			Parent = waterFolder,
+		})
+	end
+
+	print("[RuinsAesthetic] Room B terrain water voxels:", voxels)
+	return count
+end
+
+local function apply()
+	local chamber = Workspace:FindFirstChild(CHAMBER_NAME)
+	if not chamber then
+		warn("[RuinsAesthetic] Chamber not found:", CHAMBER_NAME)
+		return false
+	end
+
+	local pass = ensurePassFolder(chamber)
+	local summary = {}
+
+	local waterCount = enhanceRoomBWater(chamber, pass)
+	table.insert(summary, "waterEdges=" .. tostring(waterCount))
+
+	local regions = {
+		{ name = "EntryForecourt", config = { vines = 36, hanging = 10, weeds = 22, rubble = 18, rust = 10 } },
+		{ name = "RoomA", config = { vines = 90, hanging = 28, weeds = 55, rubble = 40, rust = 35, wallScanLimit = 300, floorScanLimit = 220 } },
+		{ name = "RoomA_VisualPass", config = { vines = 55, hanging = 40, weeds = 20, rubble = 18, rust = 22 } },
+		{ name = "RoomB", config = { vines = 70, hanging = 22, weeds = 40, rubble = 28, rust = 26, wallScanLimit = 200 } },
+		{ name = "Transitions", config = { vines = 34, hanging = 12, weeds = 16, rubble = 14, rust = 12 } },
+		{ name = "RoomC", config = { vines = 65, hanging = 30, weeds = 35, rubble = 26, rust = 24, wallScanLimit = 220 } },
+		{ name = "ClearanceChamber", config = { vines = 28, hanging = 10, weeds = 14, rubble = 12, rust = 10 } },
+		{ name = "TransitionCD", config = { vines = 24, hanging = 8, weeds = 10, rubble = 10, rust = 8 } },
+		{ name = "RoomD_Chasm", config = { vines = 50, hanging = 35, weeds = 28, rubble = 30, rust = 18, wallScanLimit = 180, floorScanLimit = 140, roofScanLimit = 100 } },
+		{ name = "ExteriorAdditions", config = { vines = 30, hanging = 16, weeds = 8, rubble = 10, rust = 8 } },
+	}
+
+	for _, entry in ipairs(regions) do
+		local region = chamber:FindFirstChild(entry.name)
+		local folder = subfolder(pass, entry.name)
+		decorateRegion(region, folder, entry.config)
+		table.insert(summary, entry.name)
+	end
+
+	-- In-place weathering is one-shot so Play/re-apply does not keep mutating metals/vines.
+	local rusted = 0
+	if not chamber:GetAttribute("RuinsMetalWeathered") then
+		rusted = weatherMetalInPlace(chamber, 180)
+		chamber:SetAttribute("RuinsMetalWeathered", true)
+	end
+	table.insert(summary, "metalWeathered=" .. tostring(rusted))
+
+	local tinted = 0
+	if not chamber:GetAttribute("RuinsVinesTinted") then
+		for _, d in ipairs(chamber:GetDescendants()) do
+			if tinted >= 400 then break end
+			if d:IsA("BasePart") and (d.Name == "SideWallVine" or d.Name == "HangingVine" or string.find(d.Name, "Vine", 1, true)) then
+				if d.Material == Enum.Material.LeafyGrass or d.Material == Enum.Material.Grass then
+					local roll = RNG:NextNumber()
+					if roll < 0.25 then
+						d.Color = COLORS.vineDeep
+						tinted += 1
+					elseif roll < 0.4 then
+						d.Color = COLORS.vineDead
+						tinted += 1
+					end
+				end
+			end
+		end
+		chamber:SetAttribute("RuinsVinesTinted", true)
+	end
+	table.insert(summary, "vinesTinted=" .. tostring(tinted))
+
+	chamber:SetAttribute(ATTR_APPLIED, true)
+	pass:SetAttribute("GeneratedAt", os.time())
+	print("[RuinsAesthetic] Applied ->", table.concat(summary, ", "), "| parts in pass:", #pass:GetDescendants())
+	return true
+end
+
+_G.TrialChamberRuinsAesthetic = { apply = apply, clearWater = clearTerrainWaterRing }
+
+if not Workspace:FindFirstChild(CHAMBER_NAME) then
+	Workspace.ChildAdded:Connect(function(child)
+		if child.Name == CHAMBER_NAME then
+			task.wait(1)
+			apply()
+		end
+	end)
+else
+	task.defer(apply)
+end
