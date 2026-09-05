@@ -1,3 +1,3 @@
 All the updates/changes that are made to the Trial Chamber are dealt over here ....
 Messed up naming the versions and descriptions from V6-6.4 (these are the only ones that are a bit messed)
-Golem Controller scripts and everything related to the player attacks is dealt in the "TC_Progression" repository 
+Golem Controller script and everything related to the player attacks and other stuff is dealt being dealt in the "TC_Progression" repository 
