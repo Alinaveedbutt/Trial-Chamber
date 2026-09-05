@@ -24,6 +24,20 @@ local playerConnections = {}
 local spawnByRoom = {} -- [ "A"|"B"|"C"|"D" ] = SpawnLocation
 local lastPosByUser = {} -- [userId] = Vector3 (HRP may be gone by Died)
 local cachedRoomDKillVolume = nil -- avoid a recursive FindFirstChild every poll
+local bestRankByUser = {} -- [userId] = highest room rank reached; can never regress
+local roomBands = nil -- chamber-local Z band per room, derived from real geometry
+local RANK_TO_ROOM = { "A", "B", "C", "D" }
+
+-- Death is a deliberate beat: Roblox waits RESPAWN_TIME, then the player is held
+-- still at the checkpoint for RESPAWN_SETTLE_DELAY before regaining control.
+local RESPAWN_TIME = 6
+local RESPAWN_SETTLE_DELAY = 1.1
+
+local inferRoomFromPosition -- forward declaration (isInRoomD depends on it)
+
+pcall(function()
+	Players.RespawnTime = RESPAWN_TIME
+end)
 
 local function findChamberRoot()
 	if chamberRoot and chamberRoot.Parent then
@@ -111,6 +125,8 @@ local function getInstancePosition(inst)
 end
 
 -- Solid pad at the chasm mouth (Room D start), not the pit at y=-50.
+-- Never falls back to TransitionCD: that clearing sits on Room C's side of the
+-- Ancient Gate, which is what made Room D deaths respawn back in Room C.
 local function findRoomDStandPart()
 	local root = findChamberRoot()
 	if not root then
@@ -118,32 +134,38 @@ local function findRoomDStandPart()
 	end
 
 	local chasm = root:FindFirstChild("RoomD_Chasm") or root:FindFirstChild("RoomD")
-	if chasm then
-		local pad = chasm:FindFirstChild("RoomDSpawnPad", true)
-		if pad and pad:IsA("BasePart") then
-			return pad
-		end
-		local cp = chasm:FindFirstChild("RoomDCheckpoint", true)
-		if cp and cp:IsA("BasePart") then
-			return cp
+	if not chasm then
+		return nil
+	end
+
+	for _, name in ipairs({ "RoomDSpawnPad", "RoomDCheckpoint" }) do
+		local part = chasm:FindFirstChild(name, true)
+		if part and part:IsA("BasePart") then
+			return part
 		end
 	end
 
-	local trans = root:FindFirstChild("TransitionCD")
-	if trans then
-		local gate = trans:FindFirstChild("AncientGate", true)
-		if gate then
-			local threshold = gate:FindFirstChild("Threshold", true)
-			if threshold and threshold:IsA("BasePart") then
-				return threshold
+	-- Otherwise the southern-most standable parkour platform inside the chasm,
+	-- i.e. the ledge the player first lands on when entering Room D.
+	local pivot = root:GetPivot()
+	local parkour = chasm:FindFirstChild("Parkour") or chasm
+	local best, bestZ = nil, math.huge
+	for _, inst in ipairs(parkour:GetDescendants()) do
+		if inst:IsA("BasePart")
+			and inst.CanCollide
+			and inst.Transparency < 0.5
+			and inst.Size.X >= 8
+			and inst.Size.Z >= 8
+			and inst.Size.Y <= 6
+		then
+			local z = pivot:PointToObjectSpace(inst.Position).Z
+			if z < bestZ then
+				bestZ = z
+				best = inst
 			end
 		end
-		local floor = trans:FindFirstChild("ClearingFloor")
-		if floor and floor:IsA("BasePart") then
-			return floor
-		end
 	end
-	return nil
+	return best
 end
 
 local function roomDWorldCFrame()
@@ -158,20 +180,6 @@ local function roomDWorldCFrame()
 	local pos
 	if stand then
 		pos = Vector3.new(stand.Position.X, topOfPart(stand) + 1, stand.Position.Z)
-	elseif chasm then
-		-- Last resort: highest floor-like part near the south of the chasm (entrance).
-		local best, bestY = nil, -math.huge
-		for _, inst in ipairs(chasm:GetDescendants()) do
-			if inst:IsA("BasePart") and inst.CanCollide and inst.Size.Y < 8 and inst.Size.X >= 8 and inst.Size.Z >= 8 then
-				if inst.Position.Y > bestY then
-					bestY = inst.Position.Y
-					best = inst
-				end
-			end
-		end
-		if best then
-			pos = Vector3.new(best.Position.X, topOfPart(best) + 1, best.Position.Z)
-		end
 	end
 
 	if not pos then
@@ -239,39 +247,17 @@ local function isInRoomD(worldPos)
 		return false
 	end
 	local root = findChamberRoot()
-	if root then
-		local lp = root:GetPivot():PointToObjectSpace(worldPos)
-		if lp.Z >= 555 then
-			return true
-		end
-		-- Falling in the chasm / TransCD descent
-		if lp.Z >= 530 and lp.Y < -15 then
-			return true
-		end
-		if not (cachedRoomDKillVolume and cachedRoomDKillVolume.Parent) then
-			cachedRoomDKillVolume = root:FindFirstChild("RoomD_InstantDeath", true)
-				or Workspace:FindFirstChild("RoomD_InstantDeath", true)
-		end
-		if cachedRoomDKillVolume and isInsidePart(cachedRoomDKillVolume, worldPos) then
-			return true
-		end
-		local folder = root:FindFirstChild("RoomD_Chasm") or root:FindFirstChild("RoomD")
-		if folder then
-			local ok, cf, size = pcall(function()
-				return folder:GetBoundingBox()
-			end)
-			if ok and cf and size then
-				local folderLocal = cf:PointToObjectSpace(worldPos)
-				if math.abs(folderLocal.X) <= size.X * 0.55
-					and math.abs(folderLocal.Y) <= size.Y * 0.7
-					and math.abs(folderLocal.Z) <= size.Z * 0.55
-				then
-					return true
-				end
-			end
-		end
+	if not root then
+		return false
 	end
-	return false
+	if not (cachedRoomDKillVolume and cachedRoomDKillVolume.Parent) then
+		cachedRoomDKillVolume = root:FindFirstChild("RoomD_InstantDeath", true)
+			or Workspace:FindFirstChild("RoomD_InstantDeath", true)
+	end
+	if cachedRoomDKillVolume and isInsidePart(cachedRoomDKillVolume, worldPos) then
+		return true
+	end
+	return inferRoomFromPosition(worldPos) == "D"
 end
 
 -- Roblox-native spawn points so default respawn lands in the right room.
@@ -328,51 +314,105 @@ local function applyPlayerRespawnLocation(player, roomKey)
 	end
 end
 
-local function inferRoomFromPosition(worldPos)
+-- Folders have no GetBoundingBox, so measure their parts directly.
+local function localZRange(container)
+	local root = findChamberRoot()
+	if not (root and container) then
+		return nil
+	end
+	local pivot = root:GetPivot()
+	local minZ, maxZ = math.huge, -math.huge
+	for _, inst in ipairs(container:GetDescendants()) do
+		if inst:IsA("BasePart") then
+			local z = pivot:PointToObjectSpace(inst.Position).Z
+			minZ = math.min(minZ, z)
+			maxZ = math.max(maxZ, z)
+		end
+	end
+	if minZ == math.huge then
+		return nil
+	end
+	return minZ, maxZ
+end
+
+-- Room boundaries are measured from the chamber that actually exists. Hardcoded
+-- Z thresholds silently rot whenever the generator moves the layout, which is
+-- how Room D deaths were being filed as Room A/B/C.
+local function buildRoomBands()
+	local root = findChamberRoot()
+	if not root then
+		return nil
+	end
+
+	local sources = {
+		A = { "EntryForecourt", "RoomA" },
+		B = { "RoomB" },
+		C = { "RoomC" },
+		D = { "RoomD_Chasm", "RoomD" },
+	}
+
+	local bands = {}
+	for _, key in ipairs({ "A", "B", "C", "D" }) do
+		local minZ, maxZ
+		for _, name in ipairs(sources[key]) do
+			local folder = root:FindFirstChild(name)
+			if folder then
+				local a, b = localZRange(folder)
+				if a then
+					minZ = minZ and math.min(minZ, a) or a
+					maxZ = maxZ and math.max(maxZ, b) or b
+				end
+			end
+		end
+		if minZ then
+			table.insert(bands, { key = key, minZ = minZ, maxZ = maxZ })
+		end
+	end
+
+	if #bands == 0 then
+		return nil
+	end
+
+	table.sort(bands, function(a, b)
+		return a.minZ < b.minZ
+	 end)
+
+	-- Room folders overlap (Room D's chasm is enormous), so cut each boundary at
+	-- the midpoint between neighbours and let the outer bands run to infinity.
+	for i = 1, #bands - 1 do
+		local mid = (bands[i].maxZ + bands[i + 1].minZ) * 0.5
+		bands[i].maxZ = mid
+		bands[i + 1].minZ = mid
+	end
+	bands[1].minZ = -math.huge
+	bands[#bands].maxZ = math.huge
+
+	roomBands = bands
+	local parts = {}
+	for _, band in ipairs(bands) do
+		table.insert(parts, string.format("%s[%.0f..%.0f]", band.key, band.minZ, band.maxZ))
+	end
+	print("[TRIAL RESPAWN] Room bands: " .. table.concat(parts, " "))
+	return bands
+end
+
+function inferRoomFromPosition(worldPos)
 	local root = findChamberRoot()
 	if not root or not worldPos then
 		return nil
 	end
 
-	if isInRoomD(worldPos) then
-		return "D"
+	local bands = roomBands or buildRoomBands()
+	if not bands then
+		return nil
 	end
 
-	local localPos = root:GetPivot():PointToObjectSpace(worldPos)
-	local z = localPos.Z
-	if z >= 555 then
-		return "D"
-	end
-	if z >= 425 then
-		return "C"
-	end
-	if z >= 270 then
-		return "B"
-	end
-	if z >= -12 then
-		return "A"
-	end
-
-	-- Fallback: which room folder contains the player (D first so C cannot steal a chasm death)
-	for _, key in ipairs({ "D", "C", "B", "A" }) do
-		local folder = root:FindFirstChild("Room" .. key)
-			or (key == "D" and root:FindFirstChild("RoomD_Chasm"))
-		if folder then
-			local ok, cf, size = pcall(function()
-				return folder:GetBoundingBox()
-			end)
-			if ok and cf and size then
-				local folderLocal = cf:PointToObjectSpace(worldPos)
-				if math.abs(folderLocal.X) <= size.X * 0.55
-					and math.abs(folderLocal.Y) <= size.Y * 0.7
-					and math.abs(folderLocal.Z) <= size.Z * 0.55
-				then
-					return key
-				end
-			end
+	local z = root:GetPivot():PointToObjectSpace(worldPos).Z
+	for _, band in ipairs(bands) do
+		if z >= band.minZ and z < band.maxZ then
+			return band.key
 		end
 	end
-
 	return nil
 end
 
@@ -382,13 +422,20 @@ local function setCheckpoint(player, roomKey, force)
 		return false
 	end
 
+	local locked = bestRankByUser[player.UserId] or 0
 	local current = player:GetAttribute(ATTR_CHECKPOINT)
-	local currentRank = ROOM_ORDER[current] or 0
+	local currentRank = math.max(ROOM_ORDER[current] or 0, locked)
 	local nextRank = ROOM_ORDER[key] or 0
 
+	-- Hard lock: nothing, not even a forced call, sends a player back a room.
+	if nextRank < locked then
+		return false
+	end
 	if not force and nextRank < currentRank then
 		return false
 	end
+
+	bestRankByUser[player.UserId] = nextRank
 
 	if current ~= key then
 		player:SetAttribute(ATTR_CHECKPOINT, key)
@@ -402,8 +449,20 @@ local function setCheckpoint(player, roomKey, force)
 end
 
 local function getCheckpoint(player)
-	local key = player and player:GetAttribute(ATTR_CHECKPOINT)
-	return normalizeRoomKey(key) or "A"
+	if not player then
+		return "A"
+	end
+	local key = normalizeRoomKey(player:GetAttribute(ATTR_CHECKPOINT))
+	local rank = math.max(ROOM_ORDER[key] or 0, bestRankByUser[player.UserId] or 0)
+	if rank <= 0 then
+		return "A"
+	end
+	local resolved = RANK_TO_ROOM[rank] or "A"
+	if resolved ~= key then
+		-- Re-assert if anything cleared or downgraded the attribute.
+		player:SetAttribute(ATTR_CHECKPOINT, resolved)
+	end
+	return resolved
 end
 
 local function placeCharacterAtCheckpoint(player, character)
@@ -459,17 +518,32 @@ local function placeCharacterAtCheckpoint(player, character)
 	if not character.Parent or not hrp.Parent then
 		return false
 	end
+
+	-- Hold the player still while the world settles, so a respawn on a narrow
+	-- Room D ledge cannot slide or fall before they have control.
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local savedWalkSpeed = humanoid and humanoid.WalkSpeed or nil
+	if humanoid then
+		humanoid.WalkSpeed = 0
+	end
+	hrp.Anchored = true
 	hrp.CFrame = targetCF
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
-	task.wait(0.15)
+
+	task.wait(RESPAWN_SETTLE_DELAY)
+
 	if character.Parent and hrp.Parent then
 		-- Only correct if something else moved the character away from the checkpoint.
 		if (hrp.Position - spawnPos).Magnitude > 6 then
 			hrp.CFrame = targetCF
-			hrp.AssemblyLinearVelocity = Vector3.zero
-			hrp.AssemblyAngularVelocity = Vector3.zero
 		end
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
+		hrp.Anchored = false
+	end
+	if humanoid and humanoid.Parent then
+		humanoid.WalkSpeed = savedWalkSpeed or 16
 	end
 
 	print("[TRIAL RESPAWN] " .. player.Name .. " respawned at Room " .. roomKey .. " checkpoint")
@@ -546,10 +620,12 @@ local function hookCharacter(player, character)
 		return
 	end
 
-	-- ONLY relocate after a death-driven respawn.
-	-- Do not teleport on every CharacterAdded just because a checkpoint exists —
-	-- that fights Roblox's single respawn and looks like multiple respawns.
+	-- Relocate after a death-driven respawn, and also whenever the player has
+	-- already banked a checkpoint. Roblox picks an arbitrary enabled SpawnLocation
+	-- whenever RespawnLocation is momentarily unset, which is how a Room D death
+	-- could drop the player back in Room C.
 	local shouldPlace = player:GetAttribute(ATTR_RESPAWNING) == true
+		or (bestRankByUser[player.UserId] or 0) > 0
 
 	if player:GetAttribute(ATTR_RESPAWNING) == true then
 		player:SetAttribute(ATTR_RESPAWNING, false)
@@ -634,6 +710,7 @@ local function unbindPlayer(player)
 	end
 	if player then
 		lastPosByUser[player.UserId] = nil
+		bestRankByUser[player.UserId] = nil
 	end
 end
 
@@ -641,6 +718,9 @@ local API = {}
 
 function API.bindChamber(rootModel)
 	chamberRoot = rootModel
+	roomBands = nil
+	cachedRoomDKillVolume = nil
+	buildRoomBands()
 	pcall(ensureRoomDCheckpointPart)
 	rebuildSpawnLocations()
 	print("[TRIAL RESPAWN] Chamber bound: " .. (rootModel and rootModel:GetFullName() or "nil"))
