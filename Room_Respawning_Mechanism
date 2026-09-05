@@ -85,12 +85,50 @@ local function topOfPart(part)
 	return part.Position.Y + part.Size.Y * 0.5
 end
 
--- Solid pad at the Ancient Gate (Room D entrance), NOT the chasm pit at y=-50.
+local function getInstancePosition(inst)
+	if not inst then
+		return nil
+	end
+	if inst:IsA("BasePart") then
+		return inst.Position
+	end
+	if inst:IsA("Model") then
+		local ok, cf = pcall(function()
+			return inst:GetPivot()
+		end)
+		if ok and cf then
+			return cf.Position
+		end
+	end
+	local ok, cf = pcall(function()
+		return select(1, inst:GetBoundingBox())
+	end)
+	if ok and typeof(cf) == "CFrame" then
+		return cf.Position
+	end
+	local part = inst:FindFirstChildWhichIsA("BasePart", true)
+	return part and part.Position or nil
+end
+
+-- Solid pad at the chasm mouth (Room D start), not the pit at y=-50.
 local function findRoomDStandPart()
 	local root = findChamberRoot()
 	if not root then
 		return nil
 	end
+
+	local chasm = root:FindFirstChild("RoomD_Chasm") or root:FindFirstChild("RoomD")
+	if chasm then
+		local pad = chasm:FindFirstChild("RoomDSpawnPad", true)
+		if pad and pad:IsA("BasePart") then
+			return pad
+		end
+		local cp = chasm:FindFirstChild("RoomDCheckpoint", true)
+		if cp and cp:IsA("BasePart") then
+			return cp
+		end
+	end
+
 	local trans = root:FindFirstChild("TransitionCD")
 	if trans then
 		local gate = trans:FindFirstChild("AncientGate", true)
@@ -120,13 +158,6 @@ local function roomDWorldCFrame()
 	local pos
 	if stand then
 		pos = Vector3.new(stand.Position.X, topOfPart(stand) + 1, stand.Position.Z)
-		if chasm then
-			local toward = Vector3.new(chasm:GetPivot().Position.X - stand.Position.X, 0, chasm:GetPivot().Position.Z - stand.Position.Z)
-			if toward.Magnitude > 1 then
-				-- Stand just through the gate on the Room D side, still on the solid floor.
-				pos = pos + toward.Unit * 8
-			end
-		end
 	elseif chasm then
 		-- Last resort: highest floor-like part near the south of the chasm (entrance).
 		local best, bestY = nil, -math.huge
@@ -147,22 +178,24 @@ local function roomDWorldCFrame()
 		return nil
 	end
 
-	local lookTarget = pos
-	if chasm then
-		local pivot = chasm:GetPivot().Position
-		local flat = Vector3.new(pivot.X - pos.X, 0, pivot.Z - pos.Z)
+	local lookTarget = pos + Vector3.new(0, 0, 1)
+	local chasmPos = getInstancePosition(chasm)
+	if chasmPos then
+		local flat = Vector3.new(chasmPos.X - pos.X, 0, chasmPos.Z - pos.Z)
 		if flat.Magnitude > 1 then
 			lookTarget = pos + flat.Unit
 		end
 	end
-	if lookTarget == pos then
-		lookTarget = pos + Vector3.new(0, 0, 1)
-	end
 	return CFrame.lookAt(pos, lookTarget)
 end
 
--- Checkpoint on the gate pad (the circled floor in front of the Room D door).
+-- Keep the Trial_Chamber chasm-mouth checkpoint. Only create one if missing.
 local function ensureRoomDCheckpointPart()
+	local existing = findCheckpointPart("D")
+	if existing then
+		return existing
+	end
+
 	local root = findChamberRoot()
 	if not root then
 		return nil
@@ -172,17 +205,10 @@ local function ensureRoomDCheckpointPart()
 		return nil
 	end
 
-	local folder = root:FindFirstChild("TransitionCD")
-		or root:FindFirstChild("RoomD_Chasm")
+	local folder = root:FindFirstChild("RoomD_Chasm")
 		or root:FindFirstChild("RoomD")
+		or root:FindFirstChild("TransitionCD")
 		or root
-
-	local existing = findCheckpointPart("D")
-	if existing then
-		existing.CFrame = cf
-		existing.Parent = folder
-		return existing
-	end
 
 	local part = Instance.new("Part")
 	part.Name = "RoomDCheckpoint"
@@ -193,7 +219,7 @@ local function ensureRoomDCheckpointPart()
 	part.CanQuery = false
 	part.Anchored = true
 	part.Parent = folder
-	print("[TRIAL RESPAWN] RoomDCheckpoint placed on Ancient Gate pad")
+	print("[TRIAL RESPAWN] RoomDCheckpoint placed at chasm start")
 	return part
 end
 
@@ -383,7 +409,7 @@ end
 local function placeCharacterAtCheckpoint(player, character)
 	local roomKey = getCheckpoint(player)
 	if roomKey == "D" then
-		ensureRoomDCheckpointPart()
+		pcall(ensureRoomDCheckpointPart)
 		rebuildSpawnLocations()
 		applyPlayerRespawnLocation(player, "D")
 	end
@@ -480,13 +506,13 @@ local function onPlayerDied(player, character)
 	local deathPos = (hrp and hrp.Position) or lastPosByUser[player.UserId]
 	if deathPos then
 		if isInRoomD(deathPos) then
-			ensureRoomDCheckpointPart()
+			pcall(ensureRoomDCheckpointPart)
 			setCheckpoint(player, "D")
 		else
 			local inferred = inferRoomFromPosition(deathPos)
 			if inferred then
 				if inferred == "D" then
-					ensureRoomDCheckpointPart()
+					pcall(ensureRoomDCheckpointPart)
 				end
 				setCheckpoint(player, inferred)
 			end
@@ -615,7 +641,7 @@ local API = {}
 
 function API.bindChamber(rootModel)
 	chamberRoot = rootModel
-	ensureRoomDCheckpointPart()
+	pcall(ensureRoomDCheckpointPart)
 	rebuildSpawnLocations()
 	print("[TRIAL RESPAWN] Chamber bound: " .. (rootModel and rootModel:GetFullName() or "nil"))
 
@@ -672,7 +698,7 @@ RunService.Heartbeat:Connect(function(dt)
 				local room = inferRoomFromPosition(hrp.Position)
 				if room then
 					if room == "D" then
-						ensureRoomDCheckpointPart()
+						pcall(ensureRoomDCheckpointPart)
 					end
 					setCheckpoint(player, room)
 				end
